@@ -1,0 +1,22 @@
+syntax = "proto3";
+package carbon;
+
+import "github.com/gogo/protobuf/gogoproto/gogo.proto";
+
+option (gogoproto.populate_all) = true;
+option (gogoproto.testgen_all) = true;
+option (gogoproto.benchgen_all) = true;
+
+message Point {
+    uint32 timestamp = 1;
+    double value = 2;
+}
+
+message Metric {
+    string metric = 1;
+    repeated Point points = 2 [(gogoproto.nullable) = false];
+}
+
+message Payload {
+    repeated Metric metrics = 1;
+}

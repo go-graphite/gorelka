@@ -1,0 +1,49 @@
+---
+Listeners:
+  - Port: 0
+    Transports:
+        kafka:
+          Type: "kafka"
+          Router: "default_relay"
+          Config:
+            - Name: "kafka-carbon-ams4"
+              Compression: "snappy"
+              Brokers:
+                  - "localhost:9092"
+              RequiredAcks: 0
+              RetryMax: 3
+              Shards: 1
+              Topic: "graphite"
+              FlushFrequency: 200000000
+              ChannelBufferSize: 100000
+    Receivers:
+        graphite:
+            Type: "graphite"
+            SendInterval: "200ms"
+            Router: "default_relay"
+            Config:
+              - Listen: ":12003"
+                Protocol: "tcp"
+                Workers: 4
+    Routers:
+        default_relay:
+          Type: "relay"
+          Config:
+              Rules:
+                  -
+                    StartsWith: "carbon."
+                    LastIfMatched: true
+                    Blackhole: false
+                    Destinations:
+                        - "kafka-carbon-ams4"
+                  -
+                    StartsWith: ""
+                    LastIfMatched: true
+                    Blackhole: true
+    MaxBatchSize: 500000
+    TransportWorkers: 6
+    TransportChanCapacity: 65536
+    SendInterval: "100ms"
+    QueueSize: 0
+Debug:
+    Listen: ":6060"
