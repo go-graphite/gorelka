@@ -12,6 +12,8 @@ import (
 	"github.com/go-graphite/g2mt/carbon"
 	"github.com/go-graphite/g2mt/distribution"
 	"sync"
+	"encoding/json"
+	"github.com/go-graphite/g2mt/encoders/graphite"
 )
 
 type KafkaSender struct {
@@ -114,7 +116,16 @@ func (k *KafkaSender) sendToKafka(payload *carbon.Payload) {
 	k.logger.Info("Got some data to send")
 
 	t0 := time.Now()
-	data, err := payload.Marshal()
+	var data []byte
+	var err error
+	switch k.Encoding {
+	case JsonEncoding:
+		data, err = json.Marshal(payload)
+	case ProtobufEncoding:
+		data, err = payload.Marshal()
+	case GraphiteLineEncoding:
+		data, err = graphite.CarbonPayloadMarshaller(payload)
+	}
 	if err != nil {
 		k.logger.Error("Failed to marshal message",
 			zap.Error(err),
