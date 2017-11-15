@@ -1,6 +1,7 @@
 package receiver
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"runtime"
@@ -83,7 +84,7 @@ func TestGraphiteReceiverStartStop(t *testing.T) {
 	// Initialize r
 	var defaultLoggerConfig = zapwriter.Config{
 		Logger:           "",
-		File:             "stdout",
+		File:             "stderr",
 		Level:            "debug",
 		Encoding:         "json",
 		EncodingTime:     "iso8601",
@@ -105,6 +106,7 @@ func TestGraphiteReceiverStartStop(t *testing.T) {
 		Listen:   dir + "/test.unix",
 		Protocol: "unix",
 		Workers:  1,
+		Strict:   true,
 	}
 	router := routers.NewDummyRouter()
 	maxBatchSize := 100
@@ -128,11 +130,35 @@ func TestGraphiteReceiverStartStop(t *testing.T) {
 	}
 }
 
-func TestGraphiteParser(t *testing.T) {
+type graphiteParser struct {
+	config   *Config
+	receiver *GraphiteLineReceiver
+	router   *routers.DummyRouter
+}
+
+func initGraphiteParser(dir string, strict bool, exitChan chan struct{}) (*graphiteParser, error) {
+	config := Config{
+		Listen:   fmt.Sprintf("%s/test_strict=%v.unix", dir, strict),
+		Protocol: "unix",
+		Workers:  1,
+		Strict:   strict,
+	}
+	router := routers.NewDummyRouter()
+	maxBatchSize := 100
+	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, 100*time.Millisecond)
+
+	return &graphiteParser{
+		config:   &config,
+		receiver: r,
+		router:   router,
+	}, err
+}
+
+func TestGraphiteParserStrict(t *testing.T) {
 	// Initialize receiver
 	var defaultLoggerConfig = zapwriter.Config{
 		Logger:           "",
-		File:             "stdout",
+		File:             "stderr",
 		Level:            "debug",
 		Encoding:         "json",
 		EncodingTime:     "iso8601",
@@ -149,17 +175,11 @@ func TestGraphiteParser(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	exitChan := make(chan struct{})
-	config := Config{
-		Listen:   dir + "/test.unix",
-		Protocol: "unix",
-		Workers:  1,
-	}
-	router := routers.NewDummyRouter()
-	maxBatchSize := 100
-	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, 100*time.Millisecond)
+	parser, err := initGraphiteParser(dir, true, exitChan)
 	if err != nil {
 		t.Fatalf("Failed to initialize receiver: %v", err)
 	}
+	r := parser.receiver
 
 	testCases := []testCase{
 		{
@@ -277,16 +297,267 @@ func TestGraphiteParser(t *testing.T) {
 			expectedError:  errors.Wrap(errFmtParseError, "invalid timestamp"),
 			expectedAnswer: nil,
 		},
+
+		{
+			testName: "Invalid metric: multiple spaces before value",
+			data:     stringToMetric("foo  1 1"),
+
+			expectedError:  errors.Wrap(errFmtParseError, "no value field"),
+			expectedAnswer: nil,
+		},
+
+		{
+			testName:       "Invalid metric: multiple spaces before timestamp",
+			data:           stringToMetric("foo 1  1"),
+			expectedError:  errors.Wrap(errFmtParseError, "invalid timestamp"),
+			expectedAnswer: nil,
+		},
 	}
 
 	for i := range testCases {
-		r, err := r.Parse(testCases[i].data)
-		if !errorsEqual(err, testCases[i].expectedError) {
-			t.Errorf("Test %v failed: Unexpected error value '%v' (expected '%v')", testCases[i].testName, err, testCases[i].expectedError)
-		}
-		if !metricsEquals(r, testCases[i].expectedAnswer) {
-			t.Errorf("Test %v failed: Unexpected result '%+v' (expected '%+v')", testCases[i].testName, r, testCases[i].expectedAnswer)
-		}
+		t.Run(testCases[i].testName, func(t *testing.T) {
+			r, err := r.Parse(testCases[i].data)
+			if !errorsEqual(err, testCases[i].expectedError) {
+				t.Errorf("Test %v failed: Unexpected error value '%v' (expected '%v')", testCases[i].testName, err, testCases[i].expectedError)
+			}
+			if !metricsEquals(r, testCases[i].expectedAnswer) {
+				t.Errorf("Test %v failed: Unexpected result '%+v' (expected '%+v')", testCases[i].testName, r, testCases[i].expectedAnswer)
+			}
+		})
+	}
+}
+
+func TestGraphiteParserRelaxed(t *testing.T) {
+	// Initialize receiver
+	var defaultLoggerConfig = zapwriter.Config{
+		Logger:           "",
+		File:             "stderr",
+		Level:            "debug",
+		Encoding:         "json",
+		EncodingTime:     "iso8601",
+		EncodingDuration: "seconds",
+	}
+
+	_ = zapwriter.ApplyConfig([]zapwriter.Config{defaultLoggerConfig})
+
+	dir, err := ioutil.TempDir("", "example")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer os.RemoveAll(dir)
+
+	exitChan := make(chan struct{})
+	parser, err := initGraphiteParser(dir, false, exitChan)
+	if err != nil {
+		t.Fatalf("Failed to initialize receiver: %v", err)
+	}
+	r := parser.receiver
+
+	testCases := []testCase{
+		{
+			testName:      "Simple valid metric",
+			data:          stringToMetric("foo 10 100"),
+			expectedError: nil,
+			expectedAnswer: &carbon.Metric{
+				Metric: "foo",
+				Points: []carbon.Point{
+					{
+						Value:     10,
+						Timestamp: 100,
+					},
+				},
+			},
+		},
+
+		{
+			testName:      "Scientific valid metric #1",
+			data:          stringToMetric("foo 1e1 1e2"),
+			expectedError: nil,
+			expectedAnswer: &carbon.Metric{
+				Metric: "foo",
+				Points: []carbon.Point{
+					{
+						Value:     10,
+						Timestamp: 100,
+					},
+				},
+			},
+		},
+
+		{
+			testName:      "Scientific valid metric #2",
+			data:          stringToMetric("foo 1E1 1E2"),
+			expectedError: nil,
+			expectedAnswer: &carbon.Metric{
+				Metric: "foo",
+				Points: []carbon.Point{
+					{
+						Value:     10,
+						Timestamp: 100,
+					},
+				},
+			},
+		},
+
+		{
+			testName:      "Float valid metric",
+			data:          stringToMetric("foo 1.0 10.0"),
+			expectedError: nil,
+			expectedAnswer: &carbon.Metric{
+				Metric: "foo",
+				Points: []carbon.Point{
+					{
+						Value:     1,
+						Timestamp: 10,
+					},
+				},
+			},
+		},
+
+		{
+			testName:       "Line is too long",
+			data:           generateName(GraphiteLineReceiverMaxLineSize + 10),
+			expectedError:  errors.Wrap(errFmtParseError, "line is too large or malformed"),
+			expectedAnswer: nil,
+		},
+
+		{
+			testName:       "Invalid metric: only name",
+			data:           stringToMetric("foo"),
+			expectedError:  errors.Wrap(errFmtParseError, "line is too large or malformed"),
+			expectedAnswer: nil,
+		},
+
+		{
+			testName:       "Invalid metric: value is empty",
+			data:           stringToMetric("foo "),
+			expectedError:  errors.Wrap(errFmtParseError, "no value field"),
+			expectedAnswer: nil,
+		},
+
+		{
+			testName:       "Invalid metric: name + value",
+			data:           stringToMetric("foo 1"),
+			expectedError:  errors.Wrap(errFmtParseError, "no value field"),
+			expectedAnswer: nil,
+		},
+
+		{
+			testName:       "Invalid metric: name + value",
+			data:           stringToMetric("foo 1 "),
+			expectedError:  errors.Wrap(errFmtParseError, "invalid timestamp"),
+			expectedAnswer: nil,
+		},
+
+		{
+			testName:       "Invalid metric: invalid value",
+			data:           stringToMetric("foo bar 1"),
+			expectedError:  errors.Wrap(errFmtParseError, "invalid value"),
+			expectedAnswer: nil,
+		},
+
+		{
+			testName:       "Invalid metric: invalid timestamp",
+			data:           stringToMetric("foo 1 baz"),
+			expectedError:  errors.Wrap(errFmtParseError, "invalid timestamp"),
+			expectedAnswer: nil,
+		},
+
+		{
+			testName:       "Invalid metric: invalid timestamp",
+			data:           stringToMetric("foo 1 1 baz"),
+			expectedError:  errors.Wrap(errFmtParseError, "invalid timestamp"),
+			expectedAnswer: nil,
+		},
+
+		{
+			testName:      "Valid metric, multiple spaces before value",
+			data:          stringToMetric("foo  10 100"),
+			expectedError: nil,
+			expectedAnswer: &carbon.Metric{
+				Metric: "foo",
+				Points: []carbon.Point{
+					{
+						Value:     10,
+						Timestamp: 100,
+					},
+				},
+			},
+		},
+
+		{
+			testName:      "Valid metric, even more spaces before value",
+			data:          stringToMetric("foo      10 100"),
+			expectedError: nil,
+			expectedAnswer: &carbon.Metric{
+				Metric: "foo",
+				Points: []carbon.Point{
+					{
+						Value:     10,
+						Timestamp: 100,
+					},
+				},
+			},
+		},
+
+		{
+			testName:      "Valid metric, win-style end of line",
+			data:          stringToMetricWinStyle("foo 10 100"),
+			expectedError: nil,
+			expectedAnswer: &carbon.Metric{
+				Metric: "foo",
+				Points: []carbon.Point{
+					{
+						Value:     10,
+						Timestamp: 100,
+					},
+				},
+			},
+		},
+
+
+		{
+			testName:      "Valid metric, multiple spaces before timestamp",
+			data:          stringToMetric("foo 10  100"),
+			expectedError: nil,
+			expectedAnswer: &carbon.Metric{
+				Metric: "foo",
+				Points: []carbon.Point{
+					{
+						Value:     10,
+						Timestamp: 100,
+					},
+				},
+			},
+		},
+
+		{
+			testName:      "Valid metric, multiple spaces everywhere",
+			data:          stringToMetric("foo    10    100"),
+			expectedError: nil,
+			expectedAnswer: &carbon.Metric{
+				Metric: "foo",
+				Points: []carbon.Point{
+					{
+						Value:     10,
+						Timestamp: 100,
+					},
+				},
+			},
+		},
+	}
+
+	for i := range testCases {
+		t.Run(testCases[i].testName, func(t *testing.T) {
+			r, err := r.parseRelaxed(testCases[i].data)
+			if !errorsEqual(err, testCases[i].expectedError) {
+				t.Errorf("Test %v failed: Unexpected error value '%v' (expected '%v')", testCases[i].testName, err, testCases[i].expectedError)
+			}
+			if !metricsEquals(r, testCases[i].expectedAnswer) {
+				t.Errorf("Test %v failed: Unexpected result '%+v' (expected '%+v')", testCases[i].testName, r, testCases[i].expectedAnswer)
+			}
+		})
 	}
 }
 
@@ -296,11 +567,19 @@ func stringToMetric(metric string) []byte {
 	return b
 }
 
+func stringToMetricWinStyle(metric string) []byte {
+	b := []byte(metric)
+	b = append(b, '\r')
+	b = append(b, '\n')
+	return b
+}
+
+
 func TestGraphiteFullPipeline(t *testing.T) {
 	// Initialize r
 	var defaultLoggerConfig = zapwriter.Config{
 		Logger:           "",
-		File:             "stdout",
+		File:             "stderr",
 		Level:            "debug",
 		Encoding:         "json",
 		EncodingTime:     "iso8601",
@@ -322,6 +601,7 @@ func TestGraphiteFullPipeline(t *testing.T) {
 		Listen:   dir + "/test.unix",
 		Protocol: "unix",
 		Workers:  1,
+		Strict:   true,
 	}
 	router := routers.NewDummyRouter()
 	maxBatchSize := 10
@@ -463,7 +743,7 @@ func TestGraphiteFullPipelineSendMetrics(t *testing.T) {
 	// Initialize r
 	var defaultLoggerConfig = zapwriter.Config{
 		Logger:           "",
-		File:             "stdout",
+		File:             "stderr",
 		Level:            "info",
 		Encoding:         "json",
 		EncodingTime:     "iso8601",
@@ -472,7 +752,6 @@ func TestGraphiteFullPipelineSendMetrics(t *testing.T) {
 
 	_ = zapwriter.ApplyConfig([]zapwriter.Config{defaultLoggerConfig})
 
-	startGoroutineNum := runtime.NumGoroutine()
 	dir, err := ioutil.TempDir("", "example")
 	if err != nil {
 		t.Fatal(err)
@@ -480,68 +759,71 @@ func TestGraphiteFullPipelineSendMetrics(t *testing.T) {
 
 	defer os.RemoveAll(dir)
 
-	exitChan := make(chan struct{})
-	config := Config{
-		Listen:   dir + "/test.unix",
-		Protocol: "unix",
-		Workers:  1,
-	}
-	router := routers.NewDummyRouter()
-	maxBatchSize := 10
-	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, 10*time.Millisecond)
-	if err != nil {
-		t.Fatalf("Failed to initialize r: %v", err)
-	}
 
-	go r.Start()
-	// End of initialization
-	line := stringToMetric("foo.bar 10 100")
-
-	sender, err := net.Dial(config.Protocol, config.Listen)
-	if err != nil {
-		t.Fatalf("Failed to establish connection: %v", err)
-	}
-
-	sender.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
-	var lastRcvDeadline time.Time
-	sendTimeout := 100 * time.Millisecond
-	for i := 0; i < 300000; i++ {
-		now := time.Now()
-		if now.Sub(lastRcvDeadline) > (sendTimeout >> 2) {
-			err = sender.SetDeadline(now.Add(sendTimeout))
+	tests := []bool{true, false}
+	for _, v := range tests {
+		t.Run(fmt.Sprintf("strict=%v", v), func(t *testing.T) {
+			exitChan := make(chan struct{})
+			startGoroutineNum := runtime.NumGoroutine()
+			parser, err := initGraphiteParser(dir, v, exitChan)
 			if err != nil {
-				t.Fatalf("Failed to send data: %v", err)
+				t.Fatalf("Failed to initialize r: %v", err)
 			}
-			lastRcvDeadline = now
-		}
-		_, err = sender.Write(line)
-		if err != nil {
-			t.Fatalf("Failed to send data: %v", err)
-		}
-	}
 
-	sender.Close()
-	time.Sleep(10 * time.Millisecond)
-	close(exitChan)
-	for {
-		goroutineNum := runtime.NumGoroutine()
+			r := parser.receiver
+			router := parser.router
 
-		if goroutineNum <= startGoroutineNum {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+			go r.Start()
+			// End of initialization
+			line := stringToMetric("foo.bar 10 100")
 
-	points := router.GetData()
-	if _, ok := points["foo.bar"]; !ok {
-		t.Errorf("Benchmark failed, got %v", points)
+			sender, err := net.Dial(parser.config.Protocol, parser.config.Listen)
+			if err != nil {
+				t.Fatalf("Failed to establish connection: %v", err)
+			}
+
+			sender.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
+			var lastRcvDeadline time.Time
+			sendTimeout := 300 * time.Millisecond
+			for i := 0; i < 300000; i++ {
+				now := time.Now()
+				if now.Sub(lastRcvDeadline) > (sendTimeout >> 2) {
+					err = sender.SetDeadline(now.Add(sendTimeout))
+					if err != nil {
+						t.Fatalf("Failed to send data: %v", err)
+					}
+					lastRcvDeadline = now
+				}
+				_, err = sender.Write(line)
+				if err != nil {
+					t.Fatalf("Failed to send data: %v", err)
+				}
+			}
+
+			sender.Close()
+			time.Sleep(10 * time.Millisecond)
+			close(exitChan)
+			for {
+				goroutineNum := runtime.NumGoroutine()
+
+				if goroutineNum <= startGoroutineNum {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			points := router.GetData()
+			if _, ok := points["foo.bar"]; !ok {
+				t.Errorf("Test failed, got %v", points)
+			}
+		})
 	}
 }
 
 func BenchmarkLineProtocolParserSmall(b *testing.B) {
 	var defaultLoggerConfig = zapwriter.Config{
 		Logger:           "",
-		File:             "stdout",
+		File:             "stderr",
 		Level:            "debug",
 		Encoding:         "json",
 		EncodingTime:     "iso8601",
@@ -562,6 +844,7 @@ func BenchmarkLineProtocolParserSmall(b *testing.B) {
 		Listen:   dir + "/test.unix",
 		Protocol: "unix",
 		Workers:  1,
+		Strict:   true,
 	}
 	router := routers.NewDummyRouter()
 	maxBatchSize := 100
@@ -581,10 +864,10 @@ func BenchmarkLineProtocolParserSmall(b *testing.B) {
 	}
 }
 
-func BenchmarkLineProtocolParserLong(b *testing.B) {
+func BenchmarkLineProtocolParserSmallRelaxed(b *testing.B) {
 	var defaultLoggerConfig = zapwriter.Config{
 		Logger:           "",
-		File:             "stdout",
+		File:             "stderr",
 		Level:            "debug",
 		Encoding:         "json",
 		EncodingTime:     "iso8601",
@@ -605,6 +888,95 @@ func BenchmarkLineProtocolParserLong(b *testing.B) {
 		Listen:   dir + "/test.unix",
 		Protocol: "unix",
 		Workers:  1,
+		Strict:   false,
+	}
+	router := routers.NewDummyRouter()
+	maxBatchSize := 100
+	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, 100*time.Millisecond)
+	if err != nil {
+		b.Fatalf("Failed to initialize receiver: %v", err)
+	}
+	line := stringToMetric("foo 10 100")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		d, err := r.parseRelaxed(line)
+		if err != nil {
+			b.Fatal("Unexpected error")
+		}
+		_ = d
+	}
+}
+
+func BenchmarkLineProtocolParserSmallRelaxedExtra5Spaces(b *testing.B) {
+	var defaultLoggerConfig = zapwriter.Config{
+		Logger:           "",
+		File:             "stderr",
+		Level:            "debug",
+		Encoding:         "json",
+		EncodingTime:     "iso8601",
+		EncodingDuration: "seconds",
+	}
+
+	_ = zapwriter.ApplyConfig([]zapwriter.Config{defaultLoggerConfig})
+
+	dir, err := ioutil.TempDir("", "example")
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	defer os.RemoveAll(dir)
+
+	exitChan := make(chan struct{})
+	config := Config{
+		Listen:   dir + "/test2.unix",
+		Protocol: "unix",
+		Workers:  1,
+		Strict:   false,
+	}
+	router := routers.NewDummyRouter()
+	maxBatchSize := 100
+	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, 100*time.Millisecond)
+	if err != nil {
+		b.Fatalf("Failed to initialize receiver: %v", err)
+	}
+	line := stringToMetric("foo      10 100")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		d, err := r.parseRelaxed(line)
+		if err != nil {
+			b.Fatalf("Unexpected error: %v", err)
+		}
+		_ = d
+	}
+}
+
+func BenchmarkLineProtocolParserLong(b *testing.B) {
+	var defaultLoggerConfig = zapwriter.Config{
+		Logger:           "",
+		File:             "stderr",
+		Level:            "debug",
+		Encoding:         "json",
+		EncodingTime:     "iso8601",
+		EncodingDuration: "seconds",
+	}
+
+	_ = zapwriter.ApplyConfig([]zapwriter.Config{defaultLoggerConfig})
+
+	dir, err := ioutil.TempDir("", "example")
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	defer os.RemoveAll(dir)
+
+	exitChan := make(chan struct{})
+	config := Config{
+		Listen:   dir + "/test.unix",
+		Protocol: "unix",
+		Workers:  1,
+		Strict:   true,
 	}
 	router := routers.NewDummyRouter()
 	maxBatchSize := 100
@@ -628,7 +1000,7 @@ func BenchmarkGraphiteFullPipelineSingleMetric(b *testing.B) {
 	// Initialize r
 	var defaultLoggerConfig = zapwriter.Config{
 		Logger:           "",
-		File:             "stdout",
+		File:             "stderr",
 		Level:            "info",
 		Encoding:         "json",
 		EncodingTime:     "iso8601",
@@ -650,6 +1022,7 @@ func BenchmarkGraphiteFullPipelineSingleMetric(b *testing.B) {
 		Listen:   dir + "/test.unix",
 		Protocol: "unix",
 		Workers:  1,
+		Strict:   true,
 	}
 	router := routers.NewDummyRouter()
 	maxBatchSize := 10

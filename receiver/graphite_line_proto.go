@@ -32,6 +32,7 @@ type Config struct {
 	Listen   string
 	Protocol string
 	Workers  int
+	Strict   bool
 }
 
 type listenerType int
@@ -229,6 +230,16 @@ func (l *GraphiteLineReceiver) Start() {
 
 func (l *GraphiteLineReceiver) validateAndParse(id int) {
 	processTicker := time.NewTicker(5 * time.Millisecond)
+	var err error
+	var metric *carbon.Metric
+	var parse func(line []byte) (*carbon.Metric, error)
+	if l.Strict {
+		l.logger.Debug("will use strict parser")
+		parse = l.Parse
+	} else {
+		l.logger.Debug("will use relaxed parser")
+		parse = l.parseRelaxed
+	}
 	for {
 		select {
 		case <-l.exitChan:
@@ -242,7 +253,7 @@ func (l *GraphiteLineReceiver) validateAndParse(id int) {
 			t0 := time.Now()
 			payload := carbon.Payload{}
 			for _, line := range d {
-				metric, err := l.Parse(line)
+				metric, err = parse(line)
 				if err != nil {
 					l.logger.Error("error parsing line protocol",
 						zap.String("line", hacks.UnsafeString(line)),
@@ -265,6 +276,51 @@ func (l *GraphiteLineReceiver) validateAndParse(id int) {
 			}
 		}
 	}
+}
+
+func (l *GraphiteLineReceiver) parseRelaxed(line []byte) (*carbon.Metric, error) {
+	s1 := bytes.IndexByte(line, ' ')
+	// Some sane limit
+	if s1 < 1 || s1 > GraphiteLineReceiverMaxLineSize {
+		return nil, errors.Wrap(errFmtParseError, "line is too large or malformed")
+	}
+	s1skipped := s1
+	for line[s1skipped+1] == ' ' && s1skipped < len(line)-1 {
+		s1skipped++
+	}
+
+	s2 := bytes.IndexByte(line[s1skipped+1:], ' ')
+	if s2 < 1 {
+		return nil, errors.Wrap(errFmtParseError, "no value field")
+	}
+	s2 += s1skipped + 1
+
+	value, err := strconv.ParseFloat(hacks.UnsafeString(line[s1skipped+1:s2]), 64)
+	if err != nil || math.IsNaN(value) {
+		return nil, errors.Wrap(errFmtParseError, "invalid value")
+	}
+	s3 := len(line) - 1
+	if line[s3-1] == '\r' || line[s3-1] == '\n' {
+		s3--
+	}
+	for line[s2+1] == ' ' {
+		s2++
+	}
+
+	ts, err := strconv.ParseFloat(hacks.UnsafeString(line[s2+1:s3]), 64)
+	if err != nil || math.IsNaN(ts) || math.IsInf(ts, 0) {
+		return nil, errors.Wrap(errFmtParseError, "invalid timestamp")
+	}
+
+	p := &carbon.Metric{
+		Metric: hacks.UnsafeString(line[:s1]),
+		Points: []carbon.Point{{
+			Value:     value,
+			Timestamp: uint32(ts),
+		}},
+	}
+
+	return p, nil
 }
 
 func (l *GraphiteLineReceiver) Parse(line []byte) (*carbon.Metric, error) {
