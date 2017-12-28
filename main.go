@@ -7,6 +7,7 @@ import (
 	"runtime"
 
 	"github.com/go-graphite/g2mt/receiver"
+	"github.com/go-graphite/g2mt/transport/common"
 	"github.com/go-graphite/g2mt/transport"
 	"github.com/lomik/zapwriter"
 	"github.com/spf13/viper"
@@ -43,7 +44,7 @@ type receiverConfig struct {
 type transportConfig struct {
 	Type   string
 	Router string
-	Config []transport.Config
+	Config []common.Config
 }
 
 type routerConfig struct {
@@ -119,7 +120,7 @@ var config = struct {
 			"kafka": {
 				Type:   "kafka",
 				Router: "default_relay",
-				Config: []transport.Config{
+				Config: []common.Config{
 					{
 						Name:                  "carbon-ams4",
 						Shards:                1,
@@ -225,22 +226,28 @@ func main() {
 	for _, l := range config.Listeners {
 		transports := make([]transport.Sender, 0)
 		for _, t := range l.Transports {
+			var senderInit transport.SenderInitFunc
 			switch t.Type {
 			case "kafka":
-				for _, cfg := range t.Config {
-					kafka, err := transport.NewKafkaSender(cfg, exitChan, l.TransportWorkers, l.MaxBatchSize, l.SendInterval)
-					if err != nil {
-						logger.Fatal("Failed to start transport",
-							zap.Error(err),
-						)
-					}
-					transports = append(transports, kafka)
-					go kafka.Start()
-				}
+				senderInit = transport.NewKafkaSender
+			case "tcp", "udp":
+				senderInit = transport.NewTCPSender
 			default:
 				logger.Fatal("Unsupported Transport Type",
 					zap.String("type", t.Type),
 				)
+			}
+
+			for _, cfg := range t.Config {
+				sender, err := senderInit(cfg, exitChan, l.TransportWorkers, l.MaxBatchSize, l.SendInterval)
+				if err != nil {
+					logger.Fatal("failed to start transport",
+						zap.Error(err),
+					)
+				}
+
+				transports = append(transports, sender)
+				go sender.Start()
 			}
 		}
 

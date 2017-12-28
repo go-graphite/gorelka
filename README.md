@@ -11,29 +11,65 @@ Early Proof of Concept. Compiles, but not tested extensively
 Features
 --------
 
+General:
+- [ ] Don't store metrics forever in queues in case destination is unavailable
+- [ ] Internal stats
+- [ ] Extended stats
+
+Calculator:
+- [ ] Calculate real metric frequency
+- [ ] Detect semi-frequent metrics
+
 Input:
+- [X] TCP
+- [X] UDP
+- [X] Unix Socket
+- [ ] Configurable encoding
+
+Input Encoders:
 - [X] Graphite Line Protocol
+- [ ] Graphite Line Protocol with tags
 - [ ] Metrics 2.0
+- [ ] InfluxDB Line Protocol
+
+Output Encoders:
+- [X] Graphite Line Protocol
+- [X] JSON
+- [X] Protobuf
+- [ ] [kafkamdm](https://github.com/raintank/schema)
 
 Output:
-- [ ] [kafkamdm](https://github.com/raintank/schema)
-- [X] Kafka (Protobuf Graphite protocol over Kafka)
-- [ ] Graphite Line Protocol
+- [X] Kafka
+- [X] TCP
+- [X] UDP
+- [ ] Unix Socket
+
+Routing:
+- [X] Regexp matching (Re2-based)
+- [X] Rewrites
+- [X] Prefix Matching
+- [X] Blackhole sender
+- [X] Log on receive
+- [ ] PCRE Regexp Matching
 
 LoadBalancing:
-- [X] [jump hash](https://arxiv.org/abs/1406.2294)
-- [ ] round robin with sticking
 - [X] fnv1a
+- [X] [jump hash fnv1a](https://arxiv.org/abs/1406.2294)
+- [ ] round robin with sticking
 - [ ] graphite consistent hash
+
+Documentation:
+- [ ] At least some docs
+- [ ] Design documentation
+- [ ] Extended docs
 
 Known issues
 ------------
 
 - Some internal queues (if you can call it queues) have no limit so malformed or unthrottled input might lead to OOM issues
 - Performance is untested, at least RegExps matching can be very slow
-- Rules readability far from perfect
+- Config format is far from perfect (readability, easy of modification, easy of generation)
 - Unstable config format
-- No Documentation
 
 Acknowledgement
 ---------------

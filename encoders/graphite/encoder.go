@@ -2,6 +2,7 @@ package graphite
 
 import (
 	"bytes"
+	"encoding/json"
 
 	"github.com/go-graphite/g2mt/carbon"
 	"strconv"
@@ -20,4 +21,12 @@ func CarbonPayloadMarshaller(payload *carbon.Payload) ([]byte, error) {
 	}
 
 	return out.Bytes(), nil
+}
+
+func PBMarshaler(payload *carbon.Payload) ([]byte, error) {
+	return payload.Marshal()
+}
+
+func JSONMarshaler(payload *carbon.Payload) ([]byte, error) {
+	return json.Marshal(payload)
 }

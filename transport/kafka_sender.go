@@ -3,21 +3,22 @@ package transport
 import (
 	"strings"
 	"time"
+	"crypto/tls"
+	"fmt"
+	"encoding/json"
+
+	"github.com/go-graphite/g2mt/carbon"
+	"github.com/go-graphite/g2mt/distribution"
+	"github.com/go-graphite/g2mt/encoders/graphite"
+	"github.com/go-graphite/g2mt/transport/common"
 
 	"github.com/Shopify/sarama"
 	"github.com/lomik/zapwriter"
 	"go.uber.org/zap"
-
-	"fmt"
-	"github.com/go-graphite/g2mt/carbon"
-	"github.com/go-graphite/g2mt/distribution"
-	"sync"
-	"encoding/json"
-	"github.com/go-graphite/g2mt/encoders/graphite"
 )
 
 type KafkaSender struct {
-	Config
+	common.Config
 
 	senderID int
 
@@ -36,14 +37,9 @@ type KafkaSender struct {
 	distributionFunc       distribution.Distribute
 }
 
-type metricsMap struct {
-	sync.RWMutex
-	data map[string]*carbon.Metric
-}
-
-func NewKafkaSender(c Config, exitChan <-chan struct{}, workers, maxBatchSize int, sendInterval time.Duration) (*KafkaSender, error) {
+func NewKafkaSender(c common.Config, exitChan <-chan struct{}, workers, maxBatchSize int, sendInterval time.Duration) (Sender, error) {
 	if c.Shards <= 0 {
-		return nil, fmt.Errorf("Invalid amount of shards (<=0), should be at least 1")
+		return nil, fmt.Errorf("invalid amount of shards (%v), should be at least 1", c.Shards)
 	}
 
 	config := sarama.NewConfig()
@@ -70,6 +66,13 @@ func NewKafkaSender(c Config, exitChan <-chan struct{}, workers, maxBatchSize in
 		distributionFunc = distribution.NewJumpFNV1aDistribution(c.Topic, c.Shards)
 	case distribution.FNV1a:
 		distributionFunc = distribution.NewFNV1aDistribution(c.Topic, c.Shards)
+	}
+
+	if c.TLS.Enabled {
+		config.Net.TLS.Enable = true
+		config.Net.TLS.Config = &tls.Config{
+			InsecureSkipVerify: true,
+		}
 	}
 
 	sender := &KafkaSender{
@@ -100,7 +103,7 @@ func (k *KafkaSender) returnMessagesToPool() {
 	case <-k.exitChan:
 		return
 	case p := <-k.kafka.Successes():
-		ProducerMessagePool.Put(p)
+		common.ProducerMessagePool.Put(p)
 	}
 }
 
@@ -119,11 +122,11 @@ func (k *KafkaSender) sendToKafka(payload *carbon.Payload) {
 	var data []byte
 	var err error
 	switch k.Encoding {
-	case JsonEncoding:
+	case common.JsonEncoding:
 		data, err = json.Marshal(payload)
-	case ProtobufEncoding:
+	case common.ProtobufEncoding:
 		data, err = payload.Marshal()
-	case GraphiteLineEncoding:
+	case common.GraphiteLineEncoding:
 		data, err = graphite.CarbonPayloadMarshaller(payload)
 	}
 	if err != nil {
@@ -132,7 +135,7 @@ func (k *KafkaSender) sendToKafka(payload *carbon.Payload) {
 		)
 	}
 
-	msg := getSaramaProducer(k.Topic, k.Partition, data)
+	msg := common.GetSaramaProducer(k.Topic, k.Partition, data)
 	k.kafka.Input() <- msg
 
 	l := 0
