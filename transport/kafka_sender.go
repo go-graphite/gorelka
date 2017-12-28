@@ -1,11 +1,11 @@
 package transport
 
 import (
+	"crypto/tls"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
-	"crypto/tls"
-	"fmt"
-	"encoding/json"
 
 	"github.com/go-graphite/g2mt/carbon"
 	"github.com/go-graphite/g2mt/distribution"
@@ -87,7 +87,7 @@ func NewKafkaSender(c common.Config, exitChan <-chan struct{}, workers, maxBatch
 		mightHaveDataToProcess: make(chan struct{}),
 		distributionFunc:       distributionFunc,
 
-		logger: zapwriter.Logger("kafka"),
+		logger: zapwriter.Logger("receiver").With(zap.String("name", c.Name), zap.String("protocol", c.Type.String())),
 	}
 
 	for i := 0; i < c.Shards; i++ {
@@ -116,7 +116,7 @@ func (k *KafkaSender) sendToKafka(payload *carbon.Payload) {
 		return
 	}
 
-	k.logger.Info("Got some data to send")
+	k.logger.Debug("got some data to send")
 
 	t0 := time.Now()
 	var data []byte
@@ -130,7 +130,7 @@ func (k *KafkaSender) sendToKafka(payload *carbon.Payload) {
 		data, err = graphite.CarbonPayloadMarshaller(payload)
 	}
 	if err != nil {
-		k.logger.Error("Failed to marshal message",
+		k.logger.Error("failed to marshal message",
 			zap.Error(err),
 		)
 	}

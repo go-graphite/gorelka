@@ -1,27 +1,29 @@
 package async
 
 import (
-	"time"
-	"sync/atomic"
-	"io"
-	"strings"
-	"net"
 	"crypto/tls"
+	"io"
+	"net"
+	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/go-graphite/g2mt/carbon"
-	transport "github.com/go-graphite/g2mt/transport/common"
 	"github.com/go-graphite/g2mt/encoders/graphite"
+	transport "github.com/go-graphite/g2mt/transport/common"
 	"github.com/go-graphite/g2mt/transport/workers"
+	"github.com/lomik/zapwriter"
+	"go.uber.org/zap"
 )
 
 type asyncWorker struct {
-	id int
+	id    int
 	alive int64
 
 	sendInterval time.Duration
-	tls *transport.TLSConfig
-	server string
-	proto string
+	tls          *transport.TLSConfig
+	server       string
+	proto        string
 
 	compressor func(w net.Conn) (io.WriteCloser, error)
 	marshaller func(payload *carbon.Payload) ([]byte, error)
@@ -29,6 +31,8 @@ type asyncWorker struct {
 	exitChan   <-chan struct{}
 	queue      chan *carbon.Metric
 	stats      workers.WorkerStats
+
+	logger *zap.Logger
 }
 
 func (w asyncWorker) IsAlive() bool {
@@ -60,7 +64,7 @@ func (w *asyncWorker) TryConnect() {
 			// srv, port := serverToPortAddr(s)
 			tlsConfig := &tls.Config{
 				InsecureSkipVerify: w.tls.SkipInsecureCerts,
-				ServerName: w.server,
+				ServerName:         w.server,
 			}
 			conn, err = tls.Dial(w.proto, w.server, tlsConfig)
 		} else {
@@ -141,14 +145,19 @@ func (w *asyncWorker) Loop() {
 }
 
 func NewAsyncWorker(id int, config transport.Config, queue chan *carbon.Metric, exitChan <-chan struct{}) *asyncWorker {
+	l := zapwriter.Logger("worker").With(
+		zap.Int("id", id),
+		zap.String("server", config.Servers[id]),
+	)
 	w := &asyncWorker{
-		id: id,
-		exitChan: exitChan,
-		queue: queue,
+		id:           id,
+		exitChan:     exitChan,
+		queue:        queue,
 		sendInterval: config.FlushFrequency,
-		server: config.Servers[id],
-		tls: &config.TLS,
-		proto: config.Type.String(),
+		server:       config.Servers[id],
+		tls:          &config.TLS,
+		proto:        config.Type.String(),
+		logger:       l,
 	}
 
 	switch config.Encoding {
@@ -174,4 +183,3 @@ func NewAsyncWorker(id int, config transport.Config, queue chan *carbon.Metric, 
 
 	return w
 }
-

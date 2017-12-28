@@ -4,32 +4,26 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-graphite/g2mt/distribution"
-	"github.com/Shopify/sarama"
 	"encoding/json"
-	"strings"
 	"fmt"
+	"github.com/Shopify/sarama"
+	"github.com/go-graphite/g2mt/distribution"
+	"strings"
 )
 
 type OutputEncoding int
-type Transport int
 
 const (
-	JsonEncoding OutputEncoding = iota
+	GraphiteLineEncoding OutputEncoding = iota
 	ProtobufEncoding
-	GraphiteLineEncoding
-
-	TCP   Transport = iota
-	UDP
-	Kafka
+	JsonEncoding
 )
 
 var supportedEncodings = map[string]OutputEncoding{
-	"json": JsonEncoding,
+	"json":     JsonEncoding,
 	"protobuf": ProtobufEncoding,
 	"graphite": GraphiteLineEncoding,
 }
-
 
 func (e *OutputEncoding) MarshalJSON() ([]byte, error) {
 	for k, v := range supportedEncodings {
@@ -37,7 +31,7 @@ func (e *OutputEncoding) MarshalJSON() ([]byte, error) {
 			return json.Marshal(k)
 		}
 	}
-	return nil, fmt.Errorf("unknown encoding")
+	return nil, fmt.Errorf("unknown encoding '%s', supported encodings: %v", *e, supportedEncodings)
 }
 
 func (e *OutputEncoding) UnmarshalJSON(data []byte) error {
@@ -55,12 +49,29 @@ func (e *OutputEncoding) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func (e OutputEncoding) String() string {
+	for k, v := range supportedEncodings {
+		if e == v {
+			return k
+		}
+	}
+
+	return "unknown"
+}
+
+type Transport int
+
+const (
+	TCP Transport = iota
+	UDP
+	Kafka
+)
+
 var supportedTransports = map[string]Transport{
 	"tcp":   TCP,
 	"udp":   UDP,
 	"kafka": Kafka,
 }
-
 
 func (e *Transport) MarshalJSON() ([]byte, error) {
 	for k, v := range supportedTransports {
@@ -68,7 +79,7 @@ func (e *Transport) MarshalJSON() ([]byte, error) {
 			return json.Marshal(k)
 		}
 	}
-	return nil, fmt.Errorf("unknown transport")
+	return nil, fmt.Errorf("unknown transport '%v', supported transports: %v", *e, supportedTransports)
 }
 
 func (e *Transport) UnmarshalJSON(data []byte) error {
@@ -97,32 +108,32 @@ func (e Transport) String() string {
 }
 
 type TLSConfig struct {
-	Enabled bool `yaml:"Enabled"`
-	SkipInsecureCerts bool `yaml:"SkipInsecureCerts"`
+	Enabled           bool `json:"Enabled"`
+	SkipInsecureCerts bool `json:"SkipInsecureCerts"`
 }
 
 type Config struct {
 	// Common
-	Name                  string                 `yaml:"Name"`
-	Type                  Transport              `yaml:"TransportType"`
-	Compression           string                 `yaml:"Compression"`
-	DistributionAlgorithm distribution.Algorithm `yaml:"DistributionAlgorithm"`
-	FlushFrequency        time.Duration          `yaml:"FlushFrequency"`
-	Encoding              OutputEncoding         `yaml:"OutputEncoding"`
-	ChannelBufferSize     int                    `yaml:"ChannelBufferSize"`
-	TLS                   TLSConfig              `yaml:"TLS"`
-	Buffered              bool                   `yaml:"Buffered"`
+	Name                  string                 `json:"Name"`
+	Type                  Transport              `json:"Type"`
+	Compression           string                 `json:"Compression"`
+	DistributionAlgorithm distribution.Algorithm `json:"DistributionAlgorithm"`
+	FlushFrequency        time.Duration          `json:"FlushFrequency"`
+	Encoding              OutputEncoding         `json:"Encoding"`
+	ChannelBufferSize     int                    `json:"ChannelBufferSize"`
+	TLS                   TLSConfig              `json:"TLS"`
+	Buffered              bool                   `json:"Buffered"`
 	// Kafka Transport
-	Brokers               []string               `yaml:"Brokers"`
-	RequiredAcks          sarama.RequiredAcks    `yaml:"RequiredAcks"`
-	RetryMax              int                    `yaml:"RetryMax"`
-	Topic                 string                 `yaml:"Topic"`
-	Shards                int                    `yaml:"Shards"`
-	Partition             int32                  `yaml:"Partition"`
+	Brokers      []string            `json:"Brokers"`
+	RequiredAcks sarama.RequiredAcks `json:"RequiredAcks"`
+	RetryMax     int                 `json:"RetryMax"`
+	Topic        string              `json:"Topic"`
+	Shards       int                 `json:"Shards"`
+	Partition    int32               `json:"Partition"`
 	//	OrganisationID    int
 	// TCP Transport
-	Servers	[]string
-	CompressionLevel int `yaml:"CompressionLevel"`
+	Servers          []string
+	CompressionLevel int `json:"CompressionLevel"`
 }
 
 var ProducerMessagePool = sync.Pool{

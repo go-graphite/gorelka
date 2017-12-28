@@ -1,9 +1,9 @@
 package transport
 
 import (
+	"fmt"
 	"strings"
 	"time"
-	"fmt"
 
 	"github.com/go-graphite/g2mt/carbon"
 	"github.com/go-graphite/g2mt/distribution"
@@ -32,8 +32,8 @@ type NETSender struct {
 
 	kafkaConfig *sarama.Config
 
-	logger                 *zap.Logger
-	distributionFunc       distribution.Distribute
+	logger           *zap.Logger
+	distributionFunc distribution.Distribute
 }
 
 func serverToPortAddr(server string) (string, string) {
@@ -63,14 +63,18 @@ func NewTCPSender(c common.Config, exitChan <-chan struct{}, workers, maxBatchSi
 	sender := &NETSender{
 		Config: c,
 
-		kafka:                  nil,
-		exitChan:               exitChan,
-		maxBatchSize:           maxBatchSize,
-		sendInterval:           sendInterval,
-		workers:                workers,
-		distributionFunc:       distributionFunc,
+		kafka:            nil,
+		exitChan:         exitChan,
+		maxBatchSize:     maxBatchSize,
+		sendInterval:     sendInterval,
+		workers:          workers,
+		distributionFunc: distributionFunc,
 
-		logger: zapwriter.Logger("kafka"),
+		logger: zapwriter.Logger("receiver").With(zap.String("name", c.Name), zap.String("protocol", c.Type.String())),
+	}
+
+	for i := 0; i < len(c.Servers); i++ {
+		sender.queues = append(sender.queues, make(chan *carbon.Metric))
 	}
 
 	return sender, nil
@@ -82,6 +86,9 @@ func (k *NETSender) GetName() string {
 
 func (k *NETSender) Send(metric *carbon.Metric) {
 	queueId := k.distributionFunc.MetricToShard(metric)
+	k.logger.Debug("got data to send",
+		zap.Int("queue_id", queueId),
+	)
 	if queueId == -1 {
 		for i := range k.queues {
 			k.queues[i] <- metric
@@ -93,6 +100,11 @@ func (k *NETSender) Send(metric *carbon.Metric) {
 
 func (k *NETSender) Start() {
 	for i := 0; i < len(k.Servers); i++ {
+		k.logger.Debug("starting worker",
+			zap.Int("worker_id", i),
+			zap.Bool("buffered", k.Config.Buffered),
+			zap.String("server", k.Config.Servers[i]),
+		)
 		var worker workers.NetWorker
 		if k.Config.Buffered {
 			worker = asyncWorker.NewAsyncWorker(i, k.Config, k.queues[i], k.exitChan)
@@ -102,4 +114,3 @@ func (k *NETSender) Start() {
 		_ = worker
 	}
 }
-

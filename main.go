@@ -7,17 +7,15 @@ import (
 	"runtime"
 
 	"github.com/go-graphite/g2mt/receiver"
-	"github.com/go-graphite/g2mt/transport/common"
 	"github.com/go-graphite/g2mt/transport"
+	"github.com/go-graphite/g2mt/transport/common"
 	"github.com/lomik/zapwriter"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 	"net/http"
 	_ "net/http/pprof"
 
-	"github.com/go-graphite/g2mt/distribution"
 	"github.com/go-graphite/g2mt/routers"
-	"github.com/Shopify/sarama"
 	"time"
 )
 
@@ -54,7 +52,7 @@ type routerConfig struct {
 
 type listenerConf struct {
 	Port                  int
-	Transports            map[string]transportConfig
+	Transports            []transportConfig
 	Receivers             map[string]receiverConfig
 	Routers               map[string]routerConfig
 	MaxBatchSize          int
@@ -65,90 +63,92 @@ type listenerConf struct {
 }
 
 var config = struct {
-	Logger    []zapwriter.Config `yaml:"logger"`
+	Logger    []zapwriter.Config `json:"Logger"`
 	Listeners []listenerConf
 
 	Debug debugConfig
 }{
-	Listeners: []listenerConf{{
-		MaxBatchSize:          500000,
-		SendInterval:          200 * time.Millisecond,
-		TransportWorkers:      4,
-		TransportChanCapacity: 64 * 1024,
-		Receivers: map[string]receiverConfig{
-			"graphite": {
-				Type:         "graphite",
-				Router:       "default_relay",
-				SendInterval: 100 * time.Millisecond,
-				Config: []receiver.Config{{
-					Listen:   ":2003",
-					Protocol: "tcp",
-					Workers:  6,
-				}},
+	/*
+		Listeners: []listenerConf{{
+			MaxBatchSize:          500000,
+			SendInterval:          200 * time.Millisecond,
+			TransportWorkers:      4,
+			TransportChanCapacity: 64 * 1024,
+			Receivers: map[string]receiverConfig{
+				"graphite": {
+					Type:         "graphite",
+					Router:       "default_relay",
+					SendInterval: 100 * time.Millisecond,
+					Config: []receiver.Config{{
+						Listen:   ":2003",
+						Protocol: "tcp",
+						Workers:  6,
+					}},
+				},
 			},
-		},
-		Routers: map[string]routerConfig{
-			"default_relay": {
-				Type: "relay",
-				Config: routers.Config{
-					Rules: []routers.Rule{
-						{
-							Regex:         "^(rewrite_me)\\.(.*)",
-							RewriteTo:     "carbon.$2",
-							LastIfMatched: true,
-							LogOnReceive:  true,
-							Blackhole:     true,
-						},
-						{
-							StartsWith:    "carbon.DONT_SEND_ME",
-							LastIfMatched: true,
-							Blackhole:     true,
-						},
-						{
-							StartsWith:    "carbon.",
-							LastIfMatched: true,
-							Destinations: []string{
-								"kafka-carbon-ams4",
-								"kafka-carbon-lhr4",
+			Routers: map[string]routerConfig{
+				"default_relay": {
+					Type: "relay",
+					Config: routers.Config{
+						Rules: []routers.Rule{
+							{
+								Regex:         "^(rewrite_me)\\.(.*)",
+								RewriteTo:     "carbon.$2",
+								LastIfMatched: true,
+								LogOnReceive:  true,
+								Blackhole:     true,
+							},
+							{
+								StartsWith:    "carbon.DONT_SEND_ME",
+								LastIfMatched: true,
+								Blackhole:     true,
+							},
+							{
+								StartsWith:    "carbon.",
+								LastIfMatched: true,
+								Destinations: []string{
+									"kafka-carbon-ams4",
+									"kafka-carbon-lhr4",
+								},
 							},
 						},
 					},
 				},
 			},
-		},
-		Transports: map[string]transportConfig{
-			"kafka": {
-				Type:   "kafka",
-				Router: "default_relay",
-				Config: []common.Config{
-					{
-						Name:                  "carbon-ams4",
-						Shards:                1,
-						DistributionAlgorithm: distribution.JumpFNV1a,
-						Compression:           "snappy",
-						Brokers:               []string{"localhost:9092"},
-						RequiredAcks:          sarama.NoResponse,
-						RetryMax:              3,
-						Topic:                 "graphite-carbon-metrics-ams4",
-						FlushFrequency:        200 * time.Millisecond,
-						ChannelBufferSize:     100000,
-					},
-					{
-						Name:                  "carbon-lhr4",
-						Shards:                1,
-						DistributionAlgorithm: distribution.JumpFNV1a,
-						Compression:           "snappy",
-						Brokers:               []string{"localhost:9092"},
-						RequiredAcks:          sarama.NoResponse,
-						RetryMax:              3,
-						Topic:                 "graphite-carbon-metrics-lhr4",
-						FlushFrequency:        200 * time.Millisecond,
-						ChannelBufferSize:     100000,
+			Transports: []transportConfig{
+				{
+					Type:   "kafka",
+					Router: "default_relay",
+					Config: []common.Config{
+						{
+							Name:                  "carbon-ams4",
+							Shards:                1,
+							DistributionAlgorithm: distribution.JumpFNV1a,
+							Compression:           "snappy",
+							Brokers:               []string{"localhost:9092"},
+							RequiredAcks:          sarama.NoResponse,
+							RetryMax:              3,
+							Topic:                 "graphite-carbon-metrics-ams4",
+							FlushFrequency:        200 * time.Millisecond,
+							ChannelBufferSize:     100000,
+						},
+						{
+							Name:                  "carbon-lhr4",
+							Shards:                1,
+							DistributionAlgorithm: distribution.JumpFNV1a,
+							Compression:           "snappy",
+							Brokers:               []string{"localhost:9092"},
+							RequiredAcks:          sarama.NoResponse,
+							RetryMax:              3,
+							Topic:                 "graphite-carbon-metrics-lhr4",
+							FlushFrequency:        200 * time.Millisecond,
+							ChannelBufferSize:     100000,
+						},
 					},
 				},
 			},
-		},
-	}},
+		}},
+	*/
 	Debug: debugConfig{
 		Listen: ":6060",
 	},
@@ -169,12 +169,12 @@ func errorPrinter(exitChan <-chan struct{}, errChan <-chan error) {
 }
 
 // BuildVersion contains version and/or commit of current build. Defaults to "Development"
-var BuildVersion = "Development"
+var BuildVersion = "development"
 
 func main() {
 	err := zapwriter.ApplyConfig([]zapwriter.Config{defaultLoggerConfig})
 	if err != nil {
-		log.Fatal("Failed to initialize logger with default configuration")
+		log.Fatal("failed to initialize logger with default configuration")
 
 	}
 	logger := zapwriter.Logger("main")
@@ -203,22 +203,22 @@ func main() {
 
 	err = viper.Unmarshal(&config)
 	if err != nil {
-		logger.Fatal("Error parsing config",
+		logger.Fatal("error parsing config",
 			zap.Error(err),
 		)
 	}
 
-	logger.Info("Starting",
-		zap.Any("config", config),
-	)
-
 	err = zapwriter.ApplyConfig(config.Logger)
 	if err != nil {
-		logger.Fatal("Failed to apply config",
+		logger.Fatal("failed to apply config",
 			zap.Any("config", config.Logger),
 			zap.Error(err),
 		)
 	}
+
+	logger.Info("starting",
+		zap.Any("config", config),
+	)
 
 	exitChan := make(chan struct{})
 	errChan := make(chan error, 64*1024)
@@ -226,6 +226,10 @@ func main() {
 	for _, l := range config.Listeners {
 		transports := make([]transport.Sender, 0)
 		for _, t := range l.Transports {
+			logger.Debug("DEBUG:",
+				zap.Any("t", t),
+			)
+
 			var senderInit transport.SenderInitFunc
 			switch t.Type {
 			case "kafka":
@@ -233,7 +237,7 @@ func main() {
 			case "tcp", "udp":
 				senderInit = transport.NewTCPSender
 			default:
-				logger.Fatal("Unsupported Transport Type",
+				logger.Fatal("unsupported transport type",
 					zap.String("type", t.Type),
 				)
 			}
@@ -257,7 +261,7 @@ func main() {
 			case "relay":
 				r[name] = routers.NewRelayRouter(transports, cfg.Config)
 			default:
-				logger.Fatal("Unsupported Router Type",
+				logger.Fatal("unsupported router type",
 					zap.String("type", cfg.Type),
 				)
 			}
@@ -265,11 +269,10 @@ func main() {
 
 		for _, cfg := range l.Receivers {
 			if cfg.Type == "graphite" {
-
 				for _, c := range cfg.Config {
 					graphite, err := receiver.NewGraphiteLineReceiver(c, r[cfg.Router], exitChan, l.MaxBatchSize, cfg.SendInterval)
 					if err != nil {
-						logger.Fatal("Failed to start receiver",
+						logger.Fatal("failed to start receiver",
 							zap.Error(err),
 							zap.Any("cfg", cfg),
 							zap.Any("routers", r),
@@ -278,7 +281,7 @@ func main() {
 					go graphite.Start()
 				}
 			} else {
-				logger.Fatal("Unsupported Receiver Type",
+				logger.Fatal("unsupported receiver type",
 					zap.String("type", cfg.Type),
 				)
 			}

@@ -1,69 +1,88 @@
 package sync
 
 import (
-	"time"
-	"sync/atomic"
-	"io"
-	"strings"
-	"net"
 	"crypto/tls"
+	"io"
+	"net"
+	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/go-graphite/g2mt/carbon"
-	transport "github.com/go-graphite/g2mt/transport/common"
 	"github.com/go-graphite/g2mt/encoders/graphite"
+	transport "github.com/go-graphite/g2mt/transport/common"
 	"github.com/go-graphite/g2mt/transport/workers"
+	"github.com/lomik/zapwriter"
+	"go.uber.org/zap"
 )
 
 type syncWorker struct {
-	id int
+	id    int
 	alive int64
 
-	tls *transport.TLSConfig
+	tls    *transport.TLSConfig
 	server string
-	proto string
+	proto  string
 
-	compressor func(w net.Conn) (io.WriteCloser, error)
-	marshaller func(payload *carbon.Payload) ([]byte, error)
-	writer     io.WriteCloser
-	exitChan   <-chan struct{}
-	queue      chan *carbon.Metric
-	stats      workers.WorkerStats
+	compressor    func(w net.Conn) (io.WriteCloser, error)
+	marshaller    func(payload *carbon.Payload) ([]byte, error)
+	writer        io.WriteCloser
+	exitChan      <-chan struct{}
+	reconnectChan chan struct{}
+	queue         chan *carbon.Metric
+	stats         workers.WorkerStats
+
+	logger *zap.Logger
 }
 
 func (w *syncWorker) TryConnect() {
 	for {
-		time.Sleep(250 * time.Millisecond)
-		if w.IsAlive() {
-			continue
-		}
+		select {
+		case <-w.exitChan:
+			return
+		case <-w.reconnectChan:
+			for {
+				w.logger.Debug("trying to connect")
 
-		var conn net.Conn
-		var err error
-		if w.tls.Enabled {
-			// srv, port := serverToPortAddr(s)
-			tlsConfig := &tls.Config{
-				InsecureSkipVerify: w.tls.SkipInsecureCerts,
-				ServerName: w.server,
+				var conn net.Conn
+				var err error
+				if w.tls.Enabled {
+					// srv, port := serverToPortAddr(s)
+					tlsConfig := &tls.Config{
+						InsecureSkipVerify: w.tls.SkipInsecureCerts,
+						ServerName:         w.server,
+					}
+					conn, err = tls.Dial(w.proto, w.server, tlsConfig)
+				} else {
+					conn, err = net.Dial(w.proto, w.server)
+				}
+
+				if err != nil {
+					w.logger.Error("error while connecting to upstream",
+						zap.Error(err),
+					)
+					atomic.AddInt64(&w.stats.ConnectErrors, 1)
+					time.Sleep(250 * time.Millisecond)
+					continue
+				}
+
+				w.writer, err = w.compressor(conn)
+				if err != nil {
+					w.logger.Error("error initializing compressor",
+						zap.Error(err),
+					)
+					atomic.AddInt64(&w.stats.ConnectErrors, 1)
+					conn.Close()
+					time.Sleep(250 * time.Millisecond)
+					continue
+				}
+				atomic.StoreInt64(&w.alive, 1)
+				go w.Loop()
+				w.logger.Debug("connection established")
+				break
 			}
-			conn, err = tls.Dial(w.proto, w.server, tlsConfig)
-		} else {
-			conn, err = net.Dial(w.proto, w.server)
 		}
 
-		if err != nil {
-			// TODO: log error
-			atomic.AddInt64(&w.stats.ConnectErrors, 1)
-			continue
-		}
-
-		w.writer, err = w.compressor(conn)
-		if err != nil {
-			// TODO: log error
-			atomic.AddInt64(&w.stats.ConnectErrors, 1)
-			conn.Close()
-			continue
-		}
-		atomic.StoreInt64(&w.alive, 1)
 	}
 }
 
@@ -99,21 +118,25 @@ func (w *syncWorker) send(metric *carbon.Metric) error {
 
 	spentTime := time.Since(t0).Nanoseconds()
 	atomic.AddInt64(&w.stats.SpentTime, spentTime)
-	atomic.AddInt64(&w.stats.SentPoints,1)
+	atomic.AddInt64(&w.stats.SentPoints, 1)
 
 	return nil
 }
 
-
 func (w *syncWorker) Loop() {
+	w.logger.Debug("worker started")
 	for {
 		select {
 		case <-w.exitChan:
 			return
 		case metric := <-w.queue:
+			w.logger.Debug("will send some data")
 			err := w.send(metric)
 			if err != nil {
-				atomic.StoreInt64(&w.alive, 0)
+				w.logger.Error("error while sending data",
+					zap.Error(err),
+				)
+				w.reconnectChan <- struct{}{}
 				return
 			}
 		}
@@ -121,13 +144,20 @@ func (w *syncWorker) Loop() {
 }
 
 func NewSyncWorker(id int, config transport.Config, queue chan *carbon.Metric, exitChan <-chan struct{}) *syncWorker {
+	l := zapwriter.Logger("worker").With(
+		zap.Int("id", id),
+		zap.String("server", config.Servers[id]),
+	)
+
 	w := &syncWorker{
-		id: id,
-		exitChan: exitChan,
-		queue: queue,
-		server: config.Servers[id],
-		tls: &config.TLS,
-		proto: config.Type.String(),
+		id:            id,
+		exitChan:      exitChan,
+		queue:         queue,
+		server:        config.Servers[id],
+		tls:           &config.TLS,
+		proto:         config.Type.String(),
+		logger:        l,
+		reconnectChan: make(chan struct{}),
 	}
 
 	switch config.Encoding {
@@ -150,6 +180,7 @@ func NewSyncWorker(id int, config transport.Config, queue chan *carbon.Metric, e
 	}
 
 	go w.TryConnect()
+	w.reconnectChan <- struct{}{}
 
 	return w
 }

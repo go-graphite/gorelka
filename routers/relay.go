@@ -70,6 +70,9 @@ func NewRelayRouter(senders []transport.Sender, config Config) *RelayRouter {
 				)
 				if sender.GetName() == dst {
 					config.Rules[i].senders = append(config.Rules[i].senders, sender)
+					logger.Debug("matched",
+						zap.String("sender_name", sender.GetName()),
+					)
 				}
 			}
 		}
@@ -140,7 +143,7 @@ func (r *RelayRouter) routeMetric(metric *carbon.Metric, iteration int) {
 	// Please note that "save original" will still produce some extra metrics
 	if iteration > r.MaxRuleRecursion {
 		atomic.AddUint64(&r.Metrics.InfiniteRecursions, 1)
-		r.logger.Warn("Suspected loop",
+		r.logger.Warn("suspected loop",
 			zap.String("reason", "max_allowed_recursion_depth exceeded"),
 			zap.Int("iteration", iteration),
 			zap.Int("max_allowed_recursion_depth", r.MaxRuleRecursion),
@@ -184,7 +187,7 @@ func (r *RelayRouter) routeMetric(metric *carbon.Metric, iteration int) {
 				if !ok {
 					re, err = regexp.Compile(rule.Regex)
 					if err != nil {
-						r.logger.Warn("Broken regexp, skipping",
+						r.logger.Warn("broken regexp, skipping",
 							zap.String("regexp", rule.Regex),
 							zap.Error(err),
 						)
@@ -215,7 +218,7 @@ func (r *RelayRouter) routeMetric(metric *carbon.Metric, iteration int) {
 				name := rewrite(re, metric.Metric, rule.RewriteTo)
 				if name == metric.Metric {
 					atomic.AddUint64(&r.Metrics.InfiniteRecursions, 1)
-					r.logger.Warn("Suspected loop",
+					r.logger.Warn("suspected loop",
 						zap.String("reason", "Metric name haven't changed after Rewrite"),
 						zap.Int("iteration", iteration),
 						zap.Int("max_allowed_recursion_depth", r.MaxRuleRecursion),
@@ -287,7 +290,7 @@ func (r *RelayRouter) routeMetric(metric *carbon.Metric, iteration int) {
 
 	// Actually send the metrics
 	for _, sender := range match.senders {
-		r.logger.Info("Sending metric",
+		r.logger.Info("sending metric",
 			zap.String("metric", metric.Metric),
 			zap.Any("sender", sender),
 		)
