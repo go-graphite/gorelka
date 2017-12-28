@@ -1,5 +1,4 @@
 g2mt
-Gopkg.lock
 *.out
 *.test
 .idea
