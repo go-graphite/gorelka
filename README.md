@@ -13,8 +13,12 @@ Features
 
 General:
 - [ ] Don't store metrics forever in queues in case destination is unavailable
+- [ ] Offload queue overflows to disk
 - [ ] Internal stats
 - [ ] Extended stats
+
+Config:
+- [ ] Override key for Transport distribution
 
 Calculator:
 - [ ] Calculate real metric frequency
@@ -52,6 +56,7 @@ Routing:
 - [X] Blackhole sender
 - [X] Log on receive
 - [ ] PCRE Regexp Matching
+- [ ] Separate tool to show where metric will lend
 
 LoadBalancing:
 - [X] fnv1a

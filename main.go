@@ -40,9 +40,7 @@ type receiverConfig struct {
 }
 
 type transportConfig struct {
-	Type   string
-	Router string
-	Config []common.ConfigForFile
+	Config common.ConfigForFile
 }
 
 type routerConfig struct {
@@ -51,9 +49,8 @@ type routerConfig struct {
 }
 
 type listenerConf struct {
-	Port                  int
-	Transports            []transportConfig
-	Receivers             map[string]receiverConfig
+	Destinations          map[string]transportConfig
+	Listeners             map[string]receiverConfig
 	Routers               map[string]routerConfig
 	MaxBatchSize          int
 	TransportWorkers      int
@@ -74,7 +71,7 @@ var config = struct {
 			SendInterval:          200 * time.Millisecond,
 			TransportWorkers:      4,
 			TransportChanCapacity: 64 * 1024,
-			Receivers: map[string]receiverConfig{
+			Listeners: map[string]receiverConfig{
 				"graphite": {
 					Type:         "graphite",
 					Router:       "default_relay",
@@ -115,7 +112,7 @@ var config = struct {
 					},
 				},
 			},
-			Transports: []transportConfig{
+			Destinations: []transportConfig{
 				{
 					Type:   "kafka",
 					Router: "default_relay",
@@ -225,42 +222,41 @@ func main() {
 
 	for _, l := range config.Listeners {
 		transports := make([]transport.Sender, 0)
-		for _, t := range l.Transports {
+		for k, t := range l.Destinations {
 			logger.Debug("DEBUG:",
 				zap.Any("t", t),
 			)
 
-			for _, cfg := range t.Config {
-				c := common.Config{}
-				err = c.FromParsed(cfg)
-				if err != nil {
-					logger.Fatal("failed to parse config",
-						zap.Error(err),
-					)
-				}
-
-				var senderInit transport.SenderInitFunc
-				switch c.Type {
-				case common.Kafka:
-					senderInit = transport.NewKafkaSender
-				case common.TCP, common.UDP:
-					senderInit = transport.NewNetSender
-				default:
-					logger.Fatal("unsupported transport type",
-						zap.String("type", t.Type),
-					)
-				}
-
-				sender, err := senderInit(c, exitChan, l.TransportWorkers, l.MaxBatchSize, l.SendInterval)
-				if err != nil {
-					logger.Fatal("failed to start transport",
-						zap.Error(err),
-					)
-				}
-
-				transports = append(transports, sender)
-				go sender.Start()
+			c := common.Config{}
+			err = c.FromParsed(t.Config)
+			c.Name = k
+			if err != nil {
+				logger.Fatal("failed to parse config",
+					zap.Error(err),
+				)
 			}
+
+			var senderInit transport.SenderInitFunc
+			switch c.Type {
+			case common.Kafka:
+				senderInit = transport.NewKafkaSender
+			case common.TCP, common.UDP:
+				senderInit = transport.NewNetSender
+			default:
+				logger.Fatal("unsupported transport type",
+					zap.String("type", c.Type.String()),
+				)
+			}
+
+			sender, err := senderInit(c, exitChan, l.TransportWorkers, l.MaxBatchSize, l.SendInterval)
+			if err != nil {
+				logger.Fatal("failed to start transport",
+					zap.Error(err),
+				)
+			}
+
+			transports = append(transports, sender)
+			go sender.Start()
 		}
 
 		r := make(map[string]routers.Router)
@@ -275,7 +271,7 @@ func main() {
 			}
 		}
 
-		for _, cfg := range l.Receivers {
+		for _, cfg := range l.Listeners {
 			if cfg.Type == "graphite" {
 				for _, c := range cfg.Config {
 					graphite, err := receiver.NewGraphiteLineReceiver(c, r[cfg.Router], exitChan, l.MaxBatchSize, cfg.SendInterval)

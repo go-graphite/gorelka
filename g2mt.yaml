@@ -1,16 +1,23 @@
 ---
 Listeners:
-  - Port: 0
-    Transports:
-       -
-          Type: "tcp"
-          Router: "default_relay"
+  - 
+    Destinations:
+       local1:
           Config:
-            - Name: "local1"
+              #   Supported: "tcp", "udp", "kafka"
               Type: "tcp"
+              #   Supported: "none", "snappy", "gzip"
+              #   Tested: "none"
               Compression: "none"
               Encoding: "graphite"
+              #   Supported: "all", "jump_fnv1a", "fnv1a"
               DistributionAlgorithm: "jump_fnv1a"
+              # Buffered: false
+              #   Used only for kafka or tcp with 'buffered: true'
+              # FlushFrequency: "200ms"
+              # Buffer for metrics if upstream is down
+              ChannelBufferSize: 100000
+              # CompressionLevel: 3 # Only for gzip
               Servers:
                   - "localhost:2004"
                   - "localhost:2005"
@@ -18,7 +25,27 @@ Listeners:
                   Enable: false
               FlushFrequency: 200000000
               ChannelBufferSize: 100000
-    Receivers:
+       local2:
+          Config:
+              Type: "kafka"
+              Compression: "snappy"
+              Encoding: "json"
+              DistributionAlgorithm: "jump_fnv1a"
+              #   Total number of partitions in cluster, requried for hashing
+              Shards: 1
+              #   Shard number, starts from 0, up to Shards-1
+              Partition: 0
+              RetryMax: 2
+              # RequiredAcks: false
+              Brokers:
+                  - "localhost:9092"
+              TLS:
+                  Enable: false
+                  SkipInsecureCerts: true
+              FlushFrequency: 200000000
+              ChannelBufferSize: 100000
+
+    Listeners:
         graphite:
             Type: "graphite"
             SendInterval: "200ms"
@@ -33,12 +60,16 @@ Listeners:
           Config:
               Rules:
                   -
+                    # Regexp: "^some(\.thing)\."
+                    # RewriteTo: "\1."
+                    # SaveOriginalOnRewrite: true
                     StartsWith: ""
                     LastIfMatched: true
                     Blackhole: false
                     LogOnReceive: true
                     Destinations:
                         - "local1"
+                        - "local2"
     MaxBatchSize: 500000
     TransportWorkers: 6
     TransportChanCapacity: 65536

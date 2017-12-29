@@ -79,12 +79,14 @@ const (
 	TCP Transport = iota
 	UDP
 	Kafka
+	Blackhole
 )
 
 var supportedTransports = map[string]Transport{
-	"tcp":   TCP,
-	"udp":   UDP,
-	"kafka": Kafka,
+	"tcp":       TCP,
+	"udp":       UDP,
+	"kafka":     Kafka,
+	"blackhole": Blackhole,
 }
 
 func (e *Transport) MarshalJSON() ([]byte, error) {
@@ -142,7 +144,6 @@ type TLSConfig struct {
 
 type ConfigForFile struct {
 	// Common
-	Name                  string        `json:"Name"`
 	Type                  string        `json:"Type"`
 	Compression           string        `json:"Compression"`
 	DistributionAlgorithm string        `json:"DistributionAlgorithm"`
@@ -190,7 +191,6 @@ type Config struct {
 }
 
 func (c *Config) FromParsed(cfg ConfigForFile) error {
-	fmt.Printf("\nGOT CFG: %+v\n\n", cfg)
 	err := c.Type.FromString(cfg.Type)
 	if err != nil {
 		return err
@@ -204,7 +204,6 @@ func (c *Config) FromParsed(cfg ConfigForFile) error {
 		return err
 	}
 
-	c.Name = cfg.Name
 	c.Compression = cfg.Compression
 	c.FlushFrequency = cfg.FlushFrequency
 	c.ChannelBufferSize = cfg.ChannelBufferSize

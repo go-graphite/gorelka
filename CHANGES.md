@@ -13,5 +13,8 @@ Changes
 
 CHANGELOG
 ---------
+**Master**
+ - **[Breaking]** config format changed
+
 **0.0.1**
  - [Improvement] First somehow usable not quite tested very experimental release
