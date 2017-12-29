@@ -3,6 +3,7 @@ package main
 import (
 	"expvar"
 	"flag"
+	"fmt"
 	"log"
 	"runtime"
 
@@ -39,7 +40,7 @@ type receiverConfig struct {
 	Config       []receiver.Config
 }
 
-type transportConfig struct {
+type destinationsConfig struct {
 	Config common.ConfigForFile
 }
 
@@ -48,8 +49,8 @@ type routerConfig struct {
 	Config routers.Config
 }
 
-type listenerConf struct {
-	Destinations          map[string]transportConfig
+type relayConf struct {
+	Destinations          map[string]destinationsConfig
 	Listeners             map[string]receiverConfig
 	Routers               map[string]routerConfig
 	MaxBatchSize          int
@@ -60,18 +61,17 @@ type listenerConf struct {
 }
 
 var config = struct {
-	Logger    []zapwriter.Config `json:"Logger"`
-	Listeners []listenerConf
-
-	Debug debugConfig
+	Relay  relayConf
+	Logger []zapwriter.Config `json:"Logger"`
+	Debug  debugConfig
 }{
 	/*
-		Listeners: []listenerConf{{
+		Configs: []relayConf{{
 			MaxBatchSize:          500000,
 			SendInterval:          200 * time.Millisecond,
 			TransportWorkers:      4,
 			TransportChanCapacity: 64 * 1024,
-			Listeners: map[string]receiverConfig{
+			Configs: map[string]receiverConfig{
 				"graphite": {
 					Type:         "graphite",
 					Router:       "default_relay",
@@ -112,7 +112,7 @@ var config = struct {
 					},
 				},
 			},
-			Destinations: []transportConfig{
+			Destinations: []destinationsConfig{
 				{
 					Type:   "kafka",
 					Router: "default_relay",
@@ -168,6 +168,32 @@ func errorPrinter(exitChan <-chan struct{}, errChan <-chan error) {
 // BuildVersion contains version and/or commit of current build. Defaults to "Development"
 var BuildVersion = "development"
 
+var errNoListenersFmt = "no %v specified"
+
+func validateConfig() {
+	logger := zapwriter.Logger("config_validator")
+
+	fatalErrors := []string{}
+
+	if config.Relay.Listeners == nil {
+		fatalErrors = append(fatalErrors, fmt.Sprintf(errNoListenersFmt, "listeners"))
+	}
+
+	if config.Relay.Destinations == nil {
+		fatalErrors = append(fatalErrors, fmt.Sprintf(errNoListenersFmt, "destinations"))
+	}
+
+	if config.Relay.Routers == nil {
+		fatalErrors = append(fatalErrors, fmt.Sprintf(errNoListenersFmt, "routers"))
+	}
+
+	if len(fatalErrors) != 0 {
+		logger.Fatal("config is invalid",
+			zap.Strings("fatal_errors", fatalErrors),
+		)
+	}
+}
+
 func main() {
 	err := zapwriter.ApplyConfig([]zapwriter.Config{defaultLoggerConfig})
 	if err != nil {
@@ -184,7 +210,7 @@ func main() {
 
 	viper.SetConfigName("g2mt")
 	if *configFile != "" {
-		viper.AddConfigPath(*configFile)
+		viper.SetConfigFile(*configFile)
 	}
 	viper.SetDefault("", config)
 
@@ -214,81 +240,82 @@ func main() {
 	}
 
 	logger.Info("starting",
+		zap.String("config_file_used", viper.ConfigFileUsed()),
 		zap.Any("config", config),
 	)
 
+	validateConfig()
+
 	exitChan := make(chan struct{})
-	errChan := make(chan error, 64*1024)
+	errChan := make(chan error, 1024)
 
-	for _, l := range config.Listeners {
-		transports := make([]transport.Sender, 0)
-		for k, t := range l.Destinations {
-			logger.Debug("DEBUG:",
-				zap.Any("t", t),
+	transports := make([]transport.Sender, 0)
+	for k, t := range config.Relay.Destinations {
+		logger.Debug("DEBUG:",
+			zap.Any("t", t),
+		)
+
+		c := common.Config{}
+		err = c.FromParsed(t.Config)
+		c.Name = k
+		if err != nil {
+			logger.Fatal("failed to parse config",
+				zap.Error(err),
 			)
-
-			c := common.Config{}
-			err = c.FromParsed(t.Config)
-			c.Name = k
-			if err != nil {
-				logger.Fatal("failed to parse config",
-					zap.Error(err),
-				)
-			}
-
-			var senderInit transport.SenderInitFunc
-			switch c.Type {
-			case common.Kafka:
-				senderInit = transport.NewKafkaSender
-			case common.TCP, common.UDP:
-				senderInit = transport.NewNetSender
-			default:
-				logger.Fatal("unsupported transport type",
-					zap.String("type", c.Type.String()),
-				)
-			}
-
-			sender, err := senderInit(c, exitChan, l.TransportWorkers, l.MaxBatchSize, l.SendInterval)
-			if err != nil {
-				logger.Fatal("failed to start transport",
-					zap.Error(err),
-				)
-			}
-
-			transports = append(transports, sender)
-			go sender.Start()
 		}
 
-		r := make(map[string]routers.Router)
-		for name, cfg := range l.Routers {
-			switch cfg.Type {
-			case "relay":
-				r[name] = routers.NewRelayRouter(transports, cfg.Config)
-			default:
-				logger.Fatal("unsupported router type",
-					zap.String("type", cfg.Type),
-				)
-			}
+		var senderInit transport.SenderInitFunc
+		switch c.Type {
+		case common.Kafka:
+			senderInit = transport.NewKafkaSender
+		case common.TCP, common.UDP:
+			senderInit = transport.NewNetSender
+		default:
+			logger.Fatal("unsupported transport type",
+				zap.String("type", c.Type.String()),
+			)
 		}
 
-		for _, cfg := range l.Listeners {
-			if cfg.Type == "graphite" {
-				for _, c := range cfg.Config {
-					graphite, err := receiver.NewGraphiteLineReceiver(c, r[cfg.Router], exitChan, l.MaxBatchSize, cfg.SendInterval)
-					if err != nil {
-						logger.Fatal("failed to start receiver",
-							zap.Error(err),
-							zap.Any("cfg", cfg),
-							zap.Any("routers", r),
-						)
-					}
-					go graphite.Start()
+		sender, err := senderInit(c, exitChan, config.Relay.TransportWorkers, config.Relay.MaxBatchSize, config.Relay.SendInterval)
+		if err != nil {
+			logger.Fatal("failed to start transport",
+				zap.Error(err),
+			)
+		}
+
+		transports = append(transports, sender)
+		go sender.Start()
+	}
+
+	r := make(map[string]routers.Router)
+	for name, cfg := range config.Relay.Routers {
+		switch cfg.Type {
+		case "relay":
+			r[name] = routers.NewRelayRouter(transports, cfg.Config)
+		default:
+			logger.Fatal("unsupported router type",
+				zap.String("type", cfg.Type),
+			)
+		}
+	}
+
+	for _, cfg := range config.Relay.Listeners {
+		if cfg.Type == "graphite" {
+			for _, c := range cfg.Config {
+				graphite, err := receiver.NewGraphiteLineReceiver(c, r[cfg.Router], exitChan, config.Relay.MaxBatchSize, cfg.SendInterval)
+				if err != nil {
+					logger.Fatal("failed to start receiver",
+						zap.Error(err),
+						zap.Any("cfg", cfg),
+						zap.Any("routers", r),
+					)
 				}
-			} else {
-				logger.Fatal("unsupported receiver type",
-					zap.String("type", cfg.Type),
-				)
+				go graphite.Start()
 			}
+		} else {
+			logger.Fatal("unsupported receiver type",
+				zap.String("type", cfg.Type),
+			)
 		}
 	}
 

@@ -1,6 +1,5 @@
 ---
-Listeners:
-  - 
+Relay:
     Destinations:
        local1:
           Config:
@@ -48,7 +47,7 @@ Listeners:
                   SkipInsecureCerts: true
               FlushFrequency: 200000000
               ChannelBufferSize: 100000
-
+    
     Listeners:
         graphite:
             Type: "graphite"
