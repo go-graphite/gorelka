@@ -516,7 +516,6 @@ func TestGraphiteParserRelaxed(t *testing.T) {
 			},
 		},
 
-
 		{
 			testName:      "Valid metric, multiple spaces before timestamp",
 			data:          stringToMetric("foo 10  100"),
@@ -573,7 +572,6 @@ func stringToMetricWinStyle(metric string) []byte {
 	b = append(b, '\n')
 	return b
 }
-
 
 func TestGraphiteFullPipeline(t *testing.T) {
 	// Initialize r
@@ -758,7 +756,6 @@ func TestGraphiteFullPipelineSendMetrics(t *testing.T) {
 	}
 
 	defer os.RemoveAll(dir)
-
 
 	tests := []bool{true, false}
 	for _, v := range tests {

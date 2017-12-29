@@ -1,8 +1,8 @@
 package transport
 
 import (
-	"sync"
 	"github.com/go-graphite/g2mt/carbon"
+	"sync"
 )
 
 type metricsMap struct {

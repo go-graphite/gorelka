@@ -1,9 +1,9 @@
 package transport
 
 import (
-	"time"
 	"github.com/go-graphite/g2mt/carbon"
 	"github.com/go-graphite/g2mt/transport/common"
+	"time"
 )
 
 type Sender interface {

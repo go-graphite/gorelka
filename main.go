@@ -244,7 +244,7 @@ func main() {
 				case common.Kafka:
 					senderInit = transport.NewKafkaSender
 				case common.TCP, common.UDP:
-					senderInit = transport.NewTCPSender
+					senderInit = transport.NewNetSender
 				default:
 					logger.Fatal("unsupported transport type",
 						zap.String("type", t.Type),
