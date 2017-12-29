@@ -74,7 +74,7 @@ func NewTCPSender(c common.Config, exitChan <-chan struct{}, workers, maxBatchSi
 	}
 
 	for i := 0; i < len(c.Servers); i++ {
-		sender.queues = append(sender.queues, make(chan *carbon.Metric))
+		sender.queues = append(sender.queues, make(chan *carbon.Metric, c.ChannelBufferSize))
 	}
 
 	return sender, nil

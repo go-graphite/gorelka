@@ -25,9 +25,9 @@ type asyncWorker struct {
 	server       string
 	proto        string
 
-	compressor func(w net.Conn) (io.WriteCloser, error)
+	compressor func(w net.Conn) (io.ReadWriteCloser, error)
 	marshaller func(payload *carbon.Payload) ([]byte, error)
-	writer     io.WriteCloser
+	writer     io.ReadWriteCloser
 	exitChan   <-chan struct{}
 	queue      chan *carbon.Metric
 	stats      workers.WorkerStats

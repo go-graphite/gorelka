@@ -34,19 +34,33 @@ func (e *OutputEncoding) MarshalJSON() ([]byte, error) {
 	return nil, fmt.Errorf("unknown encoding '%s', supported encodings: %v", *e, supportedEncodings)
 }
 
+func (e *OutputEncoding) FromString(s string) error {
+	var ok bool
+	if *e, ok = supportedEncodings[strings.ToLower(s)]; !ok {
+		return fmt.Errorf("unknown transport '%s', supported transport: %v", s, supportedEncodings)
+	}
+
+	return nil
+}
+
 func (e *OutputEncoding) UnmarshalJSON(data []byte) error {
 	var encoding string
-	var ok bool
 	err := json.Unmarshal(data, &encoding)
 	if err != nil {
 		return err
 	}
 
-	if *e, ok = supportedEncodings[strings.ToLower(encoding)]; !ok {
-		return fmt.Errorf("unknown encoding '%s', supported encodings: %v", encoding, supportedEncodings)
+	return e.FromString(encoding)
+}
+
+func (e *OutputEncoding) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var encoding string
+	err := unmarshal(&encoding)
+	if err != nil {
+		return err
 	}
 
-	return nil
+	return e.FromString(encoding)
 }
 
 func (e OutputEncoding) String() string {
@@ -82,19 +96,33 @@ func (e *Transport) MarshalJSON() ([]byte, error) {
 	return nil, fmt.Errorf("unknown transport '%v', supported transports: %v", *e, supportedTransports)
 }
 
+func (e *Transport) FromString(s string) error {
+	var ok bool
+	if *e, ok = supportedTransports[strings.ToLower(s)]; !ok {
+		return fmt.Errorf("unknown transport '%s', supported transport: %v", s, supportedTransports)
+	}
+
+	return nil
+}
+
 func (e *Transport) UnmarshalJSON(data []byte) error {
 	var transport string
-	var ok bool
 	err := json.Unmarshal(data, &transport)
 	if err != nil {
 		return err
 	}
 
-	if *e, ok = supportedTransports[strings.ToLower(transport)]; !ok {
-		return fmt.Errorf("unknown transport '%s', supported transport: %v", transport, supportedTransports)
+	return e.FromString(transport)
+}
+
+func (e *Transport) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var transport string
+	err := unmarshal(&transport)
+	if err != nil {
+		return err
 	}
 
-	return nil
+	return e.FromString(transport)
 }
 
 func (e Transport) String() string {
@@ -112,17 +140,17 @@ type TLSConfig struct {
 	SkipInsecureCerts bool `json:"SkipInsecureCerts"`
 }
 
-type Config struct {
+type ConfigForFile struct {
 	// Common
-	Name                  string                 `json:"Name"`
-	Type                  Transport              `json:"Type"`
-	Compression           string                 `json:"Compression"`
-	DistributionAlgorithm distribution.Algorithm `json:"DistributionAlgorithm"`
-	FlushFrequency        time.Duration          `json:"FlushFrequency"`
-	Encoding              OutputEncoding         `json:"Encoding"`
-	ChannelBufferSize     int                    `json:"ChannelBufferSize"`
-	TLS                   TLSConfig              `json:"TLS"`
-	Buffered              bool                   `json:"Buffered"`
+	Name                  string        `json:"Name"`
+	Type                  string        `json:"Type"`
+	Compression           string        `json:"Compression"`
+	DistributionAlgorithm string        `json:"DistributionAlgorithm"`
+	Encoding              string        `json:"Encoding"`
+	FlushFrequency        time.Duration `json:"FlushFrequency"`
+	ChannelBufferSize     int           `json:"ChannelBufferSize"`
+	TLS                   TLSConfig     `json:"TLS"`
+	Buffered              bool          `json:"Buffered"`
 	// Kafka Transport
 	Brokers      []string            `json:"Brokers"`
 	RequiredAcks sarama.RequiredAcks `json:"RequiredAcks"`
@@ -134,6 +162,63 @@ type Config struct {
 	// TCP Transport
 	Servers          []string
 	CompressionLevel int `json:"CompressionLevel"`
+}
+
+// TODO: Find out reason why Viper ignores custom unmarshal functions and remove workaround from below
+type Config struct {
+	// Common
+	Name                  string `json:"Name"`
+	Type                  Transport
+	Compression           string `json:"Compression"`
+	DistributionAlgorithm distribution.Algorithm
+	Encoding              OutputEncoding
+	FlushFrequency        time.Duration `json:"FlushFrequency"`
+	ChannelBufferSize     int           `json:"ChannelBufferSize"`
+	TLS                   TLSConfig     `json:"TLS"`
+	Buffered              bool          `json:"Buffered"`
+	// Kafka Transport
+	Brokers      []string            `json:"Brokers"`
+	RequiredAcks sarama.RequiredAcks `json:"RequiredAcks"`
+	RetryMax     int                 `json:"RetryMax"`
+	Topic        string              `json:"Topic"`
+	Shards       int                 `json:"Shards"`
+	Partition    int32               `json:"Partition"`
+	//	OrganisationID    int
+	// TCP Transport
+	Servers          []string
+	CompressionLevel int `json:"CompressionLevel"`
+}
+
+func (c *Config) FromParsed(cfg ConfigForFile) error {
+	fmt.Printf("\nGOT CFG: %+v\n\n", cfg)
+	err := c.Type.FromString(cfg.Type)
+	if err != nil {
+		return err
+	}
+	err = c.Encoding.FromString(cfg.Encoding)
+	if err != nil {
+		return err
+	}
+	err = c.DistributionAlgorithm.FromString(cfg.DistributionAlgorithm)
+	if err != nil {
+		return err
+	}
+
+	c.Name = cfg.Name
+	c.Compression = cfg.Compression
+	c.FlushFrequency = cfg.FlushFrequency
+	c.ChannelBufferSize = cfg.ChannelBufferSize
+	c.TLS = cfg.TLS
+	c.Buffered = cfg.Buffered
+	c.Brokers = cfg.Brokers
+	c.RequiredAcks = cfg.RequiredAcks
+	c.RetryMax = cfg.RetryMax
+	c.Topic = cfg.Topic
+	c.Shards = cfg.Shards
+	c.Partition = cfg.Partition
+	c.Servers = cfg.Servers
+	c.CompressionLevel = cfg.CompressionLevel
+	return nil
 }
 
 var ProducerMessagePool = sync.Pool{

@@ -42,7 +42,7 @@ type receiverConfig struct {
 type transportConfig struct {
 	Type   string
 	Router string
-	Config []common.Config
+	Config []common.ConfigForFile
 }
 
 type routerConfig struct {
@@ -230,20 +230,28 @@ func main() {
 				zap.Any("t", t),
 			)
 
-			var senderInit transport.SenderInitFunc
-			switch t.Type {
-			case "kafka":
-				senderInit = transport.NewKafkaSender
-			case "tcp", "udp":
-				senderInit = transport.NewTCPSender
-			default:
-				logger.Fatal("unsupported transport type",
-					zap.String("type", t.Type),
-				)
-			}
-
 			for _, cfg := range t.Config {
-				sender, err := senderInit(cfg, exitChan, l.TransportWorkers, l.MaxBatchSize, l.SendInterval)
+				c := common.Config{}
+				err = c.FromParsed(cfg)
+				if err != nil {
+					logger.Fatal("failed to parse config",
+						zap.Error(err),
+					)
+				}
+
+				var senderInit transport.SenderInitFunc
+				switch c.Type {
+				case common.Kafka:
+					senderInit = transport.NewKafkaSender
+				case common.TCP, common.UDP:
+					senderInit = transport.NewTCPSender
+				default:
+					logger.Fatal("unsupported transport type",
+						zap.String("type", t.Type),
+					)
+				}
+
+				sender, err := senderInit(c, exitChan, l.TransportWorkers, l.MaxBatchSize, l.SendInterval)
 				if err != nil {
 					logger.Fatal("failed to start transport",
 						zap.Error(err),

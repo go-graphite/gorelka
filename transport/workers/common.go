@@ -9,14 +9,15 @@ import (
 )
 
 type WorkerStats struct {
-	SpentTime        int64
-	SentPoints       int64
-	SendErrors       int64
-	MarshalErrors       int64
+	SpentTime     int64
+	SentPoints    int64
+	SendErrors    int64
+	MarshalErrors int64
 	ConnectErrors int64
+	DroppedPoints int64
 }
 
-func NoopCompressor(w net.Conn) (io.WriteCloser, error) {
+func NoopCompressor(w net.Conn) (io.ReadWriteCloser, error) {
 	return w, nil
 }
 
@@ -27,10 +28,26 @@ func NewGzipLeveledCompressor(level int) *GzipLeveledCompressor {
 	return &v
 }
 
-func (c GzipLeveledCompressor) NewWriter(w net.Conn) (io.WriteCloser, error) {
-	return gzip.NewWriterLevel(w, int(c))
+func (c GzipLeveledCompressor) NewWriter(w net.Conn) (io.ReadWriteCloser, error) {
+	writeCloser, err := gzip.NewWriterLevel(w, int(c))
+	if err != nil {
+		return nil, err
+	}
+	return struct {
+		io.Reader
+		io.WriteCloser
+	}{
+		Reader:      w,
+		WriteCloser: writeCloser,
+	}, nil
 }
 
-func SnappyCompressor(w net.Conn) (io.WriteCloser, error) {
-	return snappy.NewBufferedWriter(w), nil
+func SnappyCompressor(w net.Conn) (io.ReadWriteCloser, error) {
+	return struct {
+		io.Reader
+		io.WriteCloser
+	}{
+		Reader:      w,
+		WriteCloser: snappy.NewBufferedWriter(w),
+	}, nil
 }

@@ -24,36 +24,47 @@ const (
 	CarbonCH            = 3 //NotImplementedYet
 )
 
-var supportedHashs = []string{"jump_fnv1a", "fnv1a", "all"}
-
-func (h *Algorithm) MarshalJSON() ([]byte, error) {
-	switch *h {
-	case All:
-		return json.Marshal("all")
-	case FNV1a:
-		return json.Marshal("jump_fnv1a")
-	case JumpFNV1a:
-		return json.Marshal("fnv1a")
-	}
-	return nil, fmt.Errorf("Unsupported hash type %v", h)
+var supportedHashs = map[string]Algorithm{
+	"all":        All,
+	"jump_fnv1a": JumpFNV1a,
+	"fnv1a":      FNV1a,
 }
 
-func (h *Algorithm) UnmarshalJSON(b []byte) error {
-	var hashName string
-	err := json.Unmarshal(b, &hashName)
+func (h *Algorithm) MarshalJSON() ([]byte, error) {
+	for k, v := range supportedHashs {
+		if v == *h {
+			return json.Marshal(k)
+		}
+	}
+	return nil, fmt.Errorf("unknown distribution algorithm '%s', supported algorithms: %v", *h, supportedHashs)
+}
+
+func (h *Algorithm) FromString(s string) error {
+	var ok bool
+	if *h, ok = supportedHashs[strings.ToLower(s)]; !ok {
+		return fmt.Errorf("unknown distribution algorithm '%s', supported algorithms: %v", *h, supportedHashs)
+	}
+
+	return nil
+}
+
+func (h *Algorithm) UnmarshalJSON(data []byte) error {
+	var hash string
+	err := json.Unmarshal(data, &hash)
 	if err != nil {
 		return err
 	}
 
-	switch strings.ToLower(hashName) {
-	case "jump_fnv1a":
-		*h = JumpFNV1a
-	case "fnv1a":
-		*h = FNV1a
-	case "all":
-		*h = All
-	default:
-		return fmt.Errorf("Unsupported hash type %v, supported: %v", hashName, supportedHashs)
+	return h.FromString(hash)
+}
+
+func (h *Algorithm) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var hash string
+	err := unmarshal(&hash)
+	if err != nil {
+		return err
 	}
-	return nil
+
+	return h.FromString(hash)
+
 }

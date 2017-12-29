@@ -24,13 +24,14 @@ type syncWorker struct {
 	server string
 	proto  string
 
-	compressor    func(w net.Conn) (io.WriteCloser, error)
-	marshaller    func(payload *carbon.Payload) ([]byte, error)
-	writer        io.WriteCloser
-	exitChan      <-chan struct{}
-	reconnectChan chan struct{}
-	queue         chan *carbon.Metric
-	stats         workers.WorkerStats
+	compressor     func(w net.Conn) (io.ReadWriteCloser, error)
+	marshaller     func(payload *carbon.Payload) ([]byte, error)
+	writer         io.ReadWriteCloser
+	exitChan       <-chan struct{}
+	reconnectChan  chan struct{}
+	leftoversQueue chan []byte
+	queue          chan *carbon.Metric
+	stats          workers.WorkerStats
 
 	logger *zap.Logger
 }
@@ -129,6 +130,9 @@ func (w *syncWorker) Loop() {
 		select {
 		case <-w.exitChan:
 			return
+		case data := <-w.leftoversQueue:
+			w.logger.Debug("got some leftovers")
+			w.writer.Write(data)
 		case metric := <-w.queue:
 			w.logger.Debug("will send some data")
 			err := w.send(metric)
@@ -136,6 +140,24 @@ func (w *syncWorker) Loop() {
 				w.logger.Error("error while sending data",
 					zap.Error(err),
 				)
+				leftovers := make([]byte, 0)
+				n, _ := w.writer.Read(leftovers)
+				if n != 0 {
+					select {
+					case w.leftoversQueue <- leftovers:
+					default:
+						atomic.AddInt64(&w.stats.DroppedPoints, 1)
+						w.logger.Debug("queue is full, point dropped")
+					}
+
+				}
+				w.writer.Close()
+				select {
+				case w.queue <- metric:
+				default:
+					atomic.AddInt64(&w.stats.DroppedPoints, 1)
+					w.logger.Debug("queue is full, point dropped")
+				}
 				w.reconnectChan <- struct{}{}
 				return
 			}
