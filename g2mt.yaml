@@ -9,6 +9,10 @@ Listeners:
               #   Supported: "none", "snappy", "gzip"
               #   Tested: "none"
               Compression: "none"
+              #   Supported: "graphite", "json","protobuf"
+              #     graphite - graphite line protocol
+              #     protobuf - graphite's protobuf protocol (see https://github.com/go-graphite/g2mt/blob/master/carbon/carbon.proto for more info)
+              #     json - same format as protobuf messages, but json encoding
               Encoding: "graphite"
               #   Supported: "all", "jump_fnv1a", "fnv1a"
               DistributionAlgorithm: "jump_fnv1a"
