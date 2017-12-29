@@ -152,19 +152,6 @@ var config = struct {
 	Logger: []zapwriter.Config{defaultLoggerConfig},
 }
 
-func errorPrinter(exitChan <-chan struct{}, errChan <-chan error) {
-	logger := zapwriter.Logger("errorLogger")
-	select {
-	case <-exitChan:
-		return
-	case err := <-errChan:
-		logger.Error("error occured",
-			zap.Error(err),
-			zap.Stack("stack"),
-		)
-	}
-}
-
 // BuildVersion contains version and/or commit of current build. Defaults to "Development"
 var BuildVersion = "development"
 
@@ -247,7 +234,6 @@ func main() {
 	validateConfig()
 
 	exitChan := make(chan struct{})
-	errChan := make(chan error, 1024)
 
 	transports := make([]transport.Sender, 0)
 	for k, t := range config.Relay.Destinations {
@@ -318,8 +304,6 @@ func main() {
 			)
 		}
 	}
-
-	go errorPrinter(exitChan, errChan)
 
 	http.ListenAndServe(config.Debug.Listen, nil)
 }
