@@ -24,6 +24,7 @@ Input:
 - [X] TCP
 - [X] UDP
 - [X] Unix Socket
+- [ ] TLS
 - [ ] Configurable encoding
 
 Input Encoders:
@@ -67,6 +68,7 @@ Known issues
 ------------
 
 - Some internal queues (if you can call it queues) have no limit so malformed or unthrottled input might lead to OOM issues
+- If backend go down, first point in queue will be lost
 - Performance is untested, at least RegExps matching can be very slow
 - Config format is far from perfect (readability, easy of modification, easy of generation)
 - Unstable config format
