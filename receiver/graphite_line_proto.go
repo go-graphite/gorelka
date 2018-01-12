@@ -46,10 +46,11 @@ const (
 type GraphiteLineReceiver struct {
 	Config
 
-	sendInterval time.Duration
-	maxBatchSize int
-	exitChan     <-chan struct{}
-	processQueue []*queue.SingleDeliveryQueueByte
+	sendInterval  time.Duration
+	acceptTimeout time.Duration
+	maxBatchSize  int
+	exitChan      <-chan struct{}
+	processQueue  []*queue.SingleDeliveryQueueByte
 
 	listener interface{}
 	lType    listenerType
@@ -65,7 +66,7 @@ const (
 
 var errFmtParseError = errors.New("parse failed")
 
-func NewGraphiteLineReceiver(config Config, router routers.Router, exitChan <-chan struct{}, maxBatchSize int, sendInterval time.Duration) (*GraphiteLineReceiver, error) {
+func NewGraphiteLineReceiver(config Config, router routers.Router, exitChan <-chan struct{}, maxBatchSize, queueSize int, sendInterval, acceptTimeout time.Duration) (*GraphiteLineReceiver, error) {
 	lType := tcpListener
 	var listener interface{}
 	switch strings.ToLower(config.Protocol) {
@@ -118,24 +119,25 @@ func NewGraphiteLineReceiver(config Config, router routers.Router, exitChan <-ch
 		return nil, fmt.Errorf("SendInterval must be >0")
 	}
 
-	return graphiteLineReceiverInit(listener, lType, config, router, exitChan, maxBatchSize, sendInterval), nil
+	return graphiteLineReceiverInit(listener, lType, config, router, exitChan, maxBatchSize, queueSize, sendInterval, acceptTimeout), nil
 }
 
-func graphiteLineReceiverInit(listener interface{}, lType listenerType, config Config, router routers.Router, exitChan <-chan struct{}, maxBatchSize int, sendInterval time.Duration) *GraphiteLineReceiver {
+func graphiteLineReceiverInit(listener interface{}, lType listenerType, config Config, router routers.Router, exitChan <-chan struct{}, maxBatchSize, queueSize int, sendInterval, acceptTimeout time.Duration) *GraphiteLineReceiver {
 	r := &GraphiteLineReceiver{
-		Config:       config,
-		listener:     listener,
-		lType:        lType,
-		maxBatchSize: maxBatchSize,
-		exitChan:     exitChan,
-		router:       router,
-		sendInterval: sendInterval,
+		Config:        config,
+		listener:      listener,
+		lType:         lType,
+		maxBatchSize:  maxBatchSize,
+		exitChan:      exitChan,
+		router:        router,
+		sendInterval:  sendInterval,
+		acceptTimeout: acceptTimeout,
 
 		logger: zapwriter.Logger("graphite"),
 	}
 
 	for i := 0; i < config.Workers; i++ {
-		r.processQueue = append(r.processQueue, queue.NewSingleDeliveryQueueByte(1024))
+		r.processQueue = append(r.processQueue, queue.NewSingleDeliveryQueueByte(int64(queueSize)))
 	}
 	return r
 }
@@ -147,7 +149,6 @@ func (l *GraphiteLineReceiver) Start() {
 
 	l.logger.Info("started")
 
-	acceptTimeout := 50 * time.Millisecond
 	var lastRcvDeadline time.Time
 	for {
 		select {
@@ -169,8 +170,8 @@ func (l *GraphiteLineReceiver) Start() {
 			case tcpListener:
 				listener := l.listener.(*net.TCPListener)
 				now := time.Now()
-				if now.Sub(lastRcvDeadline) > (acceptTimeout >> 2) {
-					err = listener.SetDeadline(now.Add(acceptTimeout))
+				if now.Sub(lastRcvDeadline) > (l.acceptTimeout >> 2) {
+					err = listener.SetDeadline(now.Add(l.acceptTimeout))
 					if err != nil {
 						l.logger.Error("failed to update deadline for connection",
 							zap.Error(err),
@@ -183,8 +184,8 @@ func (l *GraphiteLineReceiver) Start() {
 			case unixListener:
 				listener := l.listener.(*net.UnixListener)
 				now := time.Now()
-				if now.Sub(lastRcvDeadline) > (acceptTimeout >> 2) {
-					err = listener.SetDeadline(now.Add(acceptTimeout))
+				if now.Sub(lastRcvDeadline) > (l.acceptTimeout >> 2) {
+					err = listener.SetDeadline(now.Add(l.acceptTimeout))
 					if err != nil {
 						l.logger.Error("failed to update deadline for connection",
 							zap.Error(err),
@@ -199,8 +200,8 @@ func (l *GraphiteLineReceiver) Start() {
 				conn, err = net.ListenUDP("udp", addr)
 
 				now := time.Now()
-				if now.Sub(lastRcvDeadline) > (acceptTimeout >> 2) {
-					err = conn.SetDeadline(now.Add(acceptTimeout))
+				if now.Sub(lastRcvDeadline) > (l.acceptTimeout >> 2) {
+					err = conn.SetDeadline(now.Add(l.acceptTimeout))
 					if err != nil {
 						l.logger.Error("failed to update deadline for connection",
 							zap.Error(err),
@@ -221,7 +222,7 @@ func (l *GraphiteLineReceiver) Start() {
 				)
 				continue
 			}
-			l.logger.Info("received connection")
+			l.logger.Debug("received connection")
 
 			go l.processGraphiteConnection(conn)
 		}
@@ -278,38 +279,62 @@ func (l *GraphiteLineReceiver) validateAndParse(id int) {
 	}
 }
 
-func (l *GraphiteLineReceiver) parseRelaxed(line []byte) (*carbon.Metric, error) {
-	s1 := bytes.IndexByte(line, ' ')
+func (l *GraphiteLineReceiver) parseRelaxed(line []byte) (data *carbon.Metric, err error) {
+	var s1, s2, s3 int
+
+	defer func() {
+		if r := recover(); r != nil {
+			l.logger.Error("panic occurred while parsing the string",
+				zap.Int("s2", s2),
+				zap.Int("s3", s3),
+				zap.String("last byte", string(line[s3])),
+				zap.Int("len", len(line)),
+				zap.Any("recovered panic", r),
+				zap.String("line", hacks.UnsafeString(line)),
+			)
+			data = nil
+			err = errors.Wrap(errFmtParseError, "unknown error occurred")
+		}
+	}()
+	s1 = bytes.IndexByte(line, ' ')
 	// Some sane limit
 	if s1 < 1 || s1 > GraphiteLineReceiverMaxLineSize {
-		return nil, errors.Wrap(errFmtParseError, "line is too large or malformed")
+		return nil, errors.WithMessage(errFmtParseError, "line is too large or malformed")
 	}
 	s1skipped := s1
 	for line[s1skipped+1] == ' ' && s1skipped < len(line)-1 {
 		s1skipped++
 	}
 
-	s2 := bytes.IndexByte(line[s1skipped+1:], ' ')
+	s2 = bytes.IndexByte(line[s1skipped+1:], ' ')
 	if s2 < 1 {
-		return nil, errors.Wrap(errFmtParseError, "no value field")
+		return nil, errors.WithMessage(errFmtParseError, "no value field")
 	}
 	s2 += s1skipped + 1
 
 	value, err := strconv.ParseFloat(hacks.UnsafeString(line[s1skipped+1:s2]), 64)
 	if err != nil || math.IsNaN(value) {
-		return nil, errors.Wrap(errFmtParseError, "invalid value")
+		return nil, errors.WithMessage(errFmtParseError, "invalid value")
 	}
-	s3 := len(line) - 1
-	if line[s3-1] == '\r' || line[s3-1] == '\n' {
-		s3--
+	s3 = len(line) - 1
+	for {
+		if (line[s3-1] == '\r' || line[s3-1] == '\n' || line[s3-1] == 0) && s3 > s2 {
+			s3--
+		} else {
+			break
+		}
 	}
 	for line[s2+1] == ' ' {
 		s2++
 	}
 
+	if s2+1 >= s3 {
+		return nil, errors.WithMessage(errFmtParseError, "invalid timestamp")
+	}
+
 	ts, err := strconv.ParseFloat(hacks.UnsafeString(line[s2+1:s3]), 64)
 	if err != nil || math.IsNaN(ts) || math.IsInf(ts, 0) {
-		return nil, errors.Wrap(errFmtParseError, "invalid timestamp")
+		return nil, errors.WithMessage(errFmtParseError, "invalid timestamp")
 	}
 
 	p := &carbon.Metric{
@@ -327,24 +352,24 @@ func (l *GraphiteLineReceiver) Parse(line []byte) (*carbon.Metric, error) {
 	s1 := bytes.IndexByte(line, ' ')
 	// Some sane limit
 	if s1 < 1 || s1 > GraphiteLineReceiverMaxLineSize {
-		return nil, errors.Wrap(errFmtParseError, "line is too large or malformed")
+		return nil, errors.WithMessage(errFmtParseError, "line is too large or malformed")
 	}
 
 	s2 := bytes.IndexByte(line[s1+1:], ' ')
 	if s2 < 1 {
-		return nil, errors.Wrap(errFmtParseError, "no value field")
+		return nil, errors.WithMessage(errFmtParseError, "no value field")
 	}
 	s2 += s1 + 1
 
 	value, err := strconv.ParseFloat(hacks.UnsafeString(line[s1+1:s2]), 64)
 	if err != nil || math.IsNaN(value) {
-		return nil, errors.Wrap(errFmtParseError, "invalid value")
+		return nil, errors.WithMessage(errFmtParseError, "invalid value")
 	}
 	s3 := len(line) - 1
 
 	ts, err := strconv.ParseFloat(hacks.UnsafeString(line[s2+1:s3]), 64)
 	if err != nil || math.IsNaN(ts) || math.IsInf(ts, 0) {
-		return nil, errors.Wrap(errFmtParseError, "invalid timestamp")
+		return nil, errors.WithMessage(errFmtParseError, "invalid timestamp")
 	}
 
 	p := &carbon.Metric{
@@ -360,7 +385,7 @@ func (l *GraphiteLineReceiver) Parse(line []byte) (*carbon.Metric, error) {
 
 func (l *GraphiteLineReceiver) processGraphiteConnection(c net.Conn) {
 	defer func() {
-		l.logger.Info("Finished processing of connection")
+		l.logger.Debug("Finished processing of connection")
 		err := c.Close()
 		if err != nil {
 			l.logger.Error("failed to close connection",
@@ -372,8 +397,7 @@ func (l *GraphiteLineReceiver) processGraphiteConnection(c net.Conn) {
 	reader := bufio.NewReaderSize(c, GraphiteLineReceiverMaxLineSize)
 
 	lastRcvDeadline := time.Now()
-	readTimeout := l.sendInterval
-	err := c.SetReadDeadline(lastRcvDeadline.Add(readTimeout))
+	err := c.SetReadDeadline(lastRcvDeadline.Add(l.sendInterval))
 	if err != nil {
 		l.logger.Error("failed to set deadline",
 			zap.Error(err),
@@ -382,50 +406,36 @@ func (l *GraphiteLineReceiver) processGraphiteConnection(c net.Conn) {
 	}
 
 	sentMetrics := 0
-	sendTicker := time.NewTicker(l.sendInterval)
 	buffer := make([][]byte, 0)
 	forceChan := make(chan struct{}, 1)
 	cnt := 0
+	lastSentTime := time.Now()
 	for {
 		select {
 		case <-forceChan:
-			l.processQueue[cnt].EnqueueMany(buffer)
+			for {
+				err = l.processQueue[cnt].EnqueueMany(buffer)
+				if err == nil {
+					break
+				}
+				time.Sleep(l.sendInterval / 10)
+			}
+
 			cnt++
 			if cnt >= l.Workers {
 				cnt = 0
 			}
 			buffer = make([][]byte, 0)
-			/*
-				l.logger.Debug("sent metrics",
-					zap.Bool("send_ticker", false),
-					zap.Int("metrics", sentMetrics),
-				)
-			*/
 			sentMetrics = 0
-		case <-sendTicker.C:
-			l.processQueue[cnt].EnqueueMany(buffer)
-			cnt++
-			if cnt >= l.Workers {
-				cnt = 0
-			}
-			buffer = make([][]byte, 0)
-			/*
-				l.logger.Debug("sent metrics",
-					zap.Bool("send_ticker", true),
-					zap.Int("metrics", sentMetrics),
-				)
-			*/
-			sentMetrics = 0
+			lastSentTime = time.Now()
 		case <-l.exitChan:
-			sendTicker.Stop()
 			return
 		default:
-
 		}
 
 		now := time.Now()
-		if now.Sub(lastRcvDeadline) > (readTimeout >> 2) {
-			err = c.SetDeadline(now.Add(readTimeout))
+		if now.Sub(lastRcvDeadline) > (l.sendInterval >> 2) {
+			err = c.SetDeadline(now.Add(l.sendInterval))
 			if err != nil {
 				l.logger.Error("failed to update deadline for connection",
 					zap.Error(err),
@@ -439,12 +449,22 @@ func (l *GraphiteLineReceiver) processGraphiteConnection(c net.Conn) {
 		if err != nil {
 			if err != io.EOF {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					// Silently ignore read timeouts - that might mean that connection is idle
 					continue
 				}
 				l.logger.Error("failed to read from connection",
 					zap.Error(err),
 				)
 			}
+			// Connection is now closed, exiting
+			break
+		}
+
+		if len(line) > GraphiteLineReceiverMaxLineSize {
+			l.logger.Error("faild to parse protocol",
+				zap.String("line", hacks.UnsafeString(line)),
+				zap.Error(errors.Wrap(errFmtParseError, "line is too large or malformed")),
+			)
 			break
 		}
 
@@ -458,14 +478,19 @@ func (l *GraphiteLineReceiver) processGraphiteConnection(c net.Conn) {
 		}
 		buffer = append(buffer, line)
 		sentMetrics++
-		if len(buffer) >= l.maxBatchSize {
+		if len(buffer) >= l.maxBatchSize || time.Since(lastSentTime) > l.sendInterval {
 			forceChan <- struct{}{}
 		}
 	}
 
-	l.logger.Info("Shutting down... Flushing buffer")
+	l.logger.Debug("Connection closed. Flushing buffer")
 	if len(buffer) > 0 {
-		l.processQueue[0].EnqueueMany(buffer)
+		for {
+			err = l.processQueue[0].EnqueueMany(buffer)
+			if err == nil {
+				break
+			}
+			time.Sleep(l.sendInterval / 10)
+		}
 	}
-	sendTicker.Stop()
 }

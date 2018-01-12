@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -13,11 +14,11 @@ type SingleDeliveryQueue struct {
 	nameToMetric map[string]*carbon.Metric
 
 	currentElement int
-	maxSize        int
-	size           uint64
+	maxSize        int64
+	size           int64
 }
 
-func NewSingleDeliveryQueue(size int) *SingleDeliveryQueue {
+func NewSingleDeliveryQueue(size int64) *SingleDeliveryQueue {
 	return &SingleDeliveryQueue{
 		data:         &carbon.Payload{},
 		maxSize:      size,
@@ -25,8 +26,8 @@ func NewSingleDeliveryQueue(size int) *SingleDeliveryQueue {
 	}
 }
 
-func (q *SingleDeliveryQueue) Len() uint64 {
-	s := atomic.LoadUint64(&q.size)
+func (q *SingleDeliveryQueue) Len() int64 {
+	s := atomic.LoadInt64(&q.size)
 	return s
 }
 
@@ -55,23 +56,25 @@ func (q *SingleDeliveryQueue) DequeueAll() (*carbon.Payload, bool) {
 		return nil, false
 	}
 	e := q.data
-	q.data = &carbon.Payload{}
+	q.data = &carbon.Payload{Metrics: make([]*carbon.Metric, 0, len(q.data.Metrics))}
 	q.nameToMetric = make(map[string]*carbon.Metric)
 	q.size = 0
 	q.Unlock()
 	return e, true
 }
 
+var errBufferOverflow = fmt.Errorf("buffer overflow for per/connection input queue")
+
 type SingleDeliveryQueueByte struct {
 	sync.Mutex
 	data [][]byte
 
-	currentElement int
-	maxSize        int
-	size           uint64
+	currentElement int64
+	maxSize        int64
+	size           int64
 }
 
-func NewSingleDeliveryQueueByte(size int) *SingleDeliveryQueueByte {
+func NewSingleDeliveryQueueByte(size int64) *SingleDeliveryQueueByte {
 	return &SingleDeliveryQueueByte{
 		data:    make([][]byte, 0, size),
 		maxSize: size,
@@ -79,27 +82,36 @@ func NewSingleDeliveryQueueByte(size int) *SingleDeliveryQueueByte {
 }
 
 func (q *SingleDeliveryQueueByte) HaveData() bool {
-	s := atomic.LoadUint64(&q.size)
-	return s > 0
+	return q.Len() > 0
 }
 
-func (q *SingleDeliveryQueueByte) Len() uint64 {
-	s := atomic.LoadUint64(&q.size)
+func (q *SingleDeliveryQueueByte) Len() int64 {
+	s := atomic.LoadInt64(&q.size)
 	return s
 }
 
-func (q *SingleDeliveryQueueByte) Enqueue(data []byte) {
+func (q *SingleDeliveryQueueByte) Enqueue(data []byte) error {
 	q.Lock()
+	if q.size >= q.maxSize {
+		q.Unlock()
+		return errBufferOverflow
+	}
 	q.data = append(q.data, data)
-	q.size++
+	atomic.AddInt64(&q.size, 1)
 	q.Unlock()
+	return nil
 }
 
-func (q *SingleDeliveryQueueByte) EnqueueMany(data [][]byte) {
+func (q *SingleDeliveryQueueByte) EnqueueMany(data [][]byte) error {
 	q.Lock()
+	if q.size >= q.maxSize {
+		q.Unlock()
+		return errBufferOverflow
+	}
 	q.data = append(q.data, data...)
-	q.size += uint64(len(data))
+	atomic.AddInt64(&q.size, int64(len(data)))
 	q.Unlock()
+	return nil
 }
 
 func (q *SingleDeliveryQueueByte) Dequeue() ([]byte, bool) {
@@ -110,7 +122,7 @@ func (q *SingleDeliveryQueueByte) Dequeue() ([]byte, bool) {
 	}
 	e := q.data[0]
 	q.data = q.data[1:]
-	q.size--
+	atomic.AddInt64(&q.size, -1)
 	q.Unlock()
 	return e, true
 }
@@ -122,8 +134,8 @@ func (q *SingleDeliveryQueueByte) DequeueAll() ([][]byte, bool) {
 		return nil, false
 	}
 	e := q.data
-	q.data = make([][]byte, 0, q.maxSize)
-	atomic.StoreUint64(&q.size, 0)
+	q.data = make([][]byte, 0, len(q.data))
+	atomic.StoreInt64(&q.size, 0)
 	q.Unlock()
 	return e, true
 }

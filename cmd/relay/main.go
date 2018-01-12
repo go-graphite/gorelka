@@ -34,10 +34,11 @@ type debugConfig struct {
 }
 
 type receiverConfig struct {
-	Type         string
-	Router       string
-	SendInterval time.Duration
-	Config       []receiver.Config
+	Type          string
+	Router        string
+	SendInterval  time.Duration
+	AcceptTimeout time.Duration
+	Config        []receiver.Config
 }
 
 type destinationsConfig struct {
@@ -156,11 +157,25 @@ var config = struct {
 var BuildVersion = "development"
 
 var errNoListenersFmt = "no %v specified"
+var errNoTimoutSetFmt = "no timeout set for %v"
 
 func validateConfig() {
 	logger := zapwriter.Logger("config_validator")
 
-	fatalErrors := []string{}
+	fatalErrors := make([]string, 0)
+
+	for k, cfg := range config.Relay.Listeners {
+		if cfg.SendInterval == 0 {
+			fatalErrors = append(fatalErrors, fmt.Sprintf(errNoTimoutSetFmt, fmt.Sprintf("relays.listeners.%v.%v", k, "SendInterval")))
+		}
+		if cfg.AcceptTimeout == 0 {
+			fatalErrors = append(fatalErrors, fmt.Sprintf(errNoTimoutSetFmt, fmt.Sprintf("relays.listeners.%v.%v", k, "AcceptTimeout")))
+		}
+	}
+
+	if config.Relay.QueueSize == 0 {
+		config.Relay.QueueSize = 1000000
+	}
 
 	if config.Relay.Listeners == nil {
 		fatalErrors = append(fatalErrors, fmt.Sprintf(errNoListenersFmt, "listeners"))
@@ -288,7 +303,7 @@ func main() {
 	for _, cfg := range config.Relay.Listeners {
 		if cfg.Type == "graphite" {
 			for _, c := range cfg.Config {
-				graphite, err := receiver.NewGraphiteLineReceiver(c, r[cfg.Router], exitChan, config.Relay.MaxBatchSize, cfg.SendInterval)
+				graphite, err := receiver.NewGraphiteLineReceiver(c, r[cfg.Router], exitChan, config.Relay.MaxBatchSize, config.Relay.QueueSize, cfg.SendInterval, cfg.AcceptTimeout)
 				if err != nil {
 					logger.Fatal("failed to start receiver",
 						zap.Error(err),

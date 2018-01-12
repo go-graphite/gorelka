@@ -26,8 +26,9 @@ Relay:
                   - "localhost:2005"
               TLS:
                   Enable: false
-              FlushFrequency: 200000000
+              FlushFrequency: "200ms"
               ChannelBufferSize: 100000
+              QueueSize: 1000000
        local2:
           Config:
               Type: "kafka"
@@ -52,6 +53,7 @@ Relay:
         graphite:
             Type: "graphite"
             SendInterval: "200ms"
+            AcceptTimeout: "200ms"
             Router: "default_relay"
             Config:
               - Listen: ":12003"

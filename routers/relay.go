@@ -290,7 +290,7 @@ func (r *RelayRouter) routeMetric(metric *carbon.Metric, iteration int) {
 
 	// Actually send the metrics
 	for _, sender := range match.senders {
-		r.logger.Info("sending metric",
+		r.logger.Debug("sending metric",
 			zap.String("metric", metric.Metric),
 			zap.Any("sender", sender),
 		)

@@ -2,6 +2,7 @@ package async
 
 import (
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -51,6 +52,8 @@ func (w *asyncWorker) GetStats() *workers.WorkerStats {
 	return stats
 }
 
+var errWorkerIsNotAlive = fmt.Errorf("connection is not established")
+
 func (w *asyncWorker) TryConnect() {
 	for {
 		time.Sleep(250 * time.Millisecond)
@@ -89,6 +92,9 @@ func (w *asyncWorker) TryConnect() {
 }
 
 func (w *asyncWorker) send(payload *carbon.Payload) error {
+	if !w.IsAlive() {
+		return errWorkerIsNotAlive
+	}
 	if len(payload.Metrics) == 0 {
 		return nil
 	}
@@ -136,7 +142,7 @@ func (w *asyncWorker) Loop() {
 		case <-ticker.C:
 			err := w.send(data)
 			if err == nil {
-				data = &carbon.Payload{}
+				data = &carbon.Payload{Metrics: make([]*carbon.Metric, 0, len(data.Metrics))}
 				metricsMap = make(map[string]*carbon.Metric)
 			}
 		}
