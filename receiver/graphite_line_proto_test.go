@@ -659,7 +659,7 @@ func TestGraphiteFullPipeline(t *testing.T) {
 	if !haveErrors {
 		points := router.GetData()
 		if points == nil {
-			t.Errorf("Result it nil, exepceted %+v", testCases)
+			t.Errorf("Result is nil, exepceted %+v", testCases)
 
 		} else {
 			for i := range testCases {
