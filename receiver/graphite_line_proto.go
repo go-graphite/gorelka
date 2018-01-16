@@ -39,6 +39,8 @@ type Config struct {
 	Tags Tags // atomic.Value
 }
 
+type Tags map[string]string
+
 type listenerType int
 
 const (
@@ -380,8 +382,26 @@ func (l *GraphiteLineReceiver) Parse(line []byte) (*carbon.Metric, error) {
 		return nil, errors.WithMessage(errFmtParseError, "invalid timestamp")
 	}
 
+	metric := hacks.UnsafeString(line[:s1])
+	tags := Tags{}
+	if bytes.Contains(line[:s1], []byte(";")) {
+		for i, part := range bytes.Split(line[:s1], []byte(";")) {
+			if i == 0 {
+				metric = string(part)
+				continue
+			}
+			pair := bytes.Split(part, []byte("="))
+			if len(pair) != 2 {
+				return nil, errors.WithMessage(errFmtParseError, "")
+			}
+			tags[string(pair[0])] = string(pair[1])
+		}
+	}
+	l.Config.mergeDefaultTags(tags)
+
 	p := &carbon.Metric{
-		Metric: hacks.UnsafeString(line[:s1]),
+		Metric: metric,
+		Tags:   tags,
 		Points: []carbon.Point{{
 			Value:     value,
 			Timestamp: uint32(ts),
@@ -494,6 +514,7 @@ func (l *GraphiteLineReceiver) processGraphiteConnection(c net.Conn) {
 		buffer = append(buffer, line)
 		sentMetrics++
 		if len(buffer) >= l.maxBatchSize || time.Since(lastSentTime) > l.sendInterval {
+			l.logger.Debug("forceChan")
 			forceChan <- struct{}{}
 		}
 	}
@@ -507,5 +528,11 @@ func (l *GraphiteLineReceiver) processGraphiteConnection(c net.Conn) {
 			}
 			time.Sleep(l.sendInterval / 10)
 		}
+	}
+}
+
+func (c *Config) mergeDefaultTags(tags Tags) {
+	for k, v := range c.Tags {
+		tags[k] = v
 	}
 }

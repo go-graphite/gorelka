@@ -25,6 +25,9 @@ func TestGraphiteLineEncoder(t *testing.T) {
 			},
 			{
 				Metric: "boo.bar",
+				Tags: map[string]string{
+					"rename_enable": "1",
+				},
 				Points: []carbon.Point{
 					{
 						Timestamp: 1508759656,
@@ -39,7 +42,7 @@ func TestGraphiteLineEncoder(t *testing.T) {
 		},
 	}
 
-	expectedOutput := []byte("foo.bar 0.1 1508759656\nfoo.bar 0.2 1508759657\nboo.bar 1.1 1508759656\nboo.bar 1.2 1508759657\n")
+	expectedOutput := []byte("foo.bar 0.1 1508759656\nfoo.bar 0.2 1508759657\nboo.bar;rename_enable=1 1.1 1508759656\nboo.bar;rename_enable=1 1.2 1508759657\n")
 
 	out, err := CarbonPayloadMarshaller(payload)
 	if err != nil {
