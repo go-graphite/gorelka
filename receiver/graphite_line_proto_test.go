@@ -9,11 +9,12 @@ import (
 
 	"github.com/pkg/errors"
 
+	"net"
+	"time"
+
 	"github.com/go-graphite/g2mt/carbon"
 	"github.com/go-graphite/g2mt/routers"
 	"github.com/lomik/zapwriter"
-	"net"
-	"time"
 )
 
 // Helper functions and structs
@@ -110,7 +111,7 @@ func TestGraphiteReceiverStartStop(t *testing.T) {
 	}
 	router := routers.NewDummyRouter()
 	maxBatchSize := 100
-	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, 100*time.Millisecond)
+	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, config.Workers, 100*time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatalf("Failed to initialize r: %v", err)
 	}
@@ -140,12 +141,12 @@ func initGraphiteParser(dir string, strict bool, exitChan chan struct{}) (*graph
 	config := Config{
 		Listen:   fmt.Sprintf("%s/test_strict=%v.unix", dir, strict),
 		Protocol: "unix",
-		Workers:  1,
+		Workers:  100,
 		Strict:   strict,
 	}
 	router := routers.NewDummyRouter()
 	maxBatchSize := 100
-	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, 100*time.Millisecond)
+	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, config.Workers, 100*time.Millisecond, time.Second)
 
 	return &graphiteParser{
 		config:   &config,
@@ -603,7 +604,7 @@ func TestGraphiteFullPipeline(t *testing.T) {
 	}
 	router := routers.NewDummyRouter()
 	maxBatchSize := 10
-	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, 10*time.Millisecond)
+	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, config.Workers, 10*time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatalf("Failed to initialize r: %v", err)
 	}
@@ -650,6 +651,7 @@ func TestGraphiteFullPipeline(t *testing.T) {
 			t.Errorf("Test %v failed: Unexpected error value '%v' (expected '%v')", testCases[i].testName, err, testCases[i].expectedError)
 		}
 	}
+	sender.Close()
 	time.Sleep(50 * time.Millisecond)
 
 	if !haveErrors {
@@ -671,7 +673,6 @@ func TestGraphiteFullPipeline(t *testing.T) {
 			}
 		}
 	}
-	sender.Close()
 	// Send a lot of data without checking
 
 	var data []byte
@@ -845,7 +846,7 @@ func BenchmarkLineProtocolParserSmall(b *testing.B) {
 	}
 	router := routers.NewDummyRouter()
 	maxBatchSize := 100
-	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, 100*time.Millisecond)
+	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, config.Workers, 100*time.Millisecond, time.Second)
 	if err != nil {
 		b.Fatalf("Failed to initialize receiver: %v", err)
 	}
@@ -889,7 +890,7 @@ func BenchmarkLineProtocolParserSmallRelaxed(b *testing.B) {
 	}
 	router := routers.NewDummyRouter()
 	maxBatchSize := 100
-	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, 100*time.Millisecond)
+	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, config.Workers, 100*time.Millisecond, time.Second)
 	if err != nil {
 		b.Fatalf("Failed to initialize receiver: %v", err)
 	}
@@ -933,7 +934,7 @@ func BenchmarkLineProtocolParserSmallRelaxedExtra5Spaces(b *testing.B) {
 	}
 	router := routers.NewDummyRouter()
 	maxBatchSize := 100
-	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, 100*time.Millisecond)
+	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, config.Workers, 100*time.Millisecond, time.Second)
 	if err != nil {
 		b.Fatalf("Failed to initialize receiver: %v", err)
 	}
@@ -977,7 +978,7 @@ func BenchmarkLineProtocolParserLong(b *testing.B) {
 	}
 	router := routers.NewDummyRouter()
 	maxBatchSize := 100
-	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, 100*time.Millisecond)
+	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, config.Workers, 100*time.Millisecond, time.Second)
 	if err != nil {
 		b.Fatalf("Failed to initialize receiver: %v", err)
 	}
@@ -1023,7 +1024,7 @@ func BenchmarkGraphiteFullPipelineSingleMetric(b *testing.B) {
 	}
 	router := routers.NewDummyRouter()
 	maxBatchSize := 10
-	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, 10*time.Millisecond)
+	r, err := NewGraphiteLineReceiver(config, router, exitChan, maxBatchSize, config.Workers, 10*time.Millisecond, time.Second)
 	if err != nil {
 		b.Fatalf("Failed to initialize r: %v", err)
 	}

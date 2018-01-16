@@ -3,21 +3,15 @@ package graphite
 import (
 	"bytes"
 	"encoding/json"
+	"strconv"
 
 	"github.com/go-graphite/g2mt/carbon"
-	"strconv"
 )
 
 func CarbonPayloadMarshaller(payload *carbon.Payload) ([]byte, error) {
 	out := new(bytes.Buffer)
-	for _, metric := range payload.Metrics {
-		for _, point := range metric.Points {
-			tmp := metric.Metric + " " + strconv.FormatFloat(point.Value, 'f', -1, 64) + " " + strconv.FormatUint(uint64(point.Timestamp), 10) + "\n"
-			_, err := out.WriteString(tmp)
-			if err != nil {
-				return nil, err
-			}
-		}
+	for _, m := range payload.Metrics {
+		(*metric)(m).write(out)
 	}
 
 	return out.Bytes(), nil
@@ -29,4 +23,25 @@ func PBMarshaler(payload *carbon.Payload) ([]byte, error) {
 
 func JSONMarshaler(payload *carbon.Payload) ([]byte, error) {
 	return json.Marshal(payload)
+}
+
+type metric carbon.Metric
+
+func (m *metric) write(w *bytes.Buffer) {
+	metricTags := m.Metric
+	for k, v := range m.Tags {
+		metricTags += ";"
+		metricTags += k
+		metricTags += "="
+		metricTags += v
+	}
+	metricTags += " "
+
+	for _, point := range m.Points {
+		w.WriteString(metricTags)
+		w.WriteString(strconv.FormatFloat(point.Value, 'f', -1, 64))
+		w.WriteString(" ")
+		w.WriteString(strconv.FormatUint(uint64(point.Timestamp), 10))
+		w.WriteString("\n")
+	}
 }

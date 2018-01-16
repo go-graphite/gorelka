@@ -2,10 +2,10 @@ package workers
 
 import (
 	"io"
+	"net"
 
 	"github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/snappy"
-	"net"
 )
 
 type WorkerStats struct {
@@ -50,4 +50,23 @@ func SnappyCompressor(w net.Conn) (io.ReadWriteCloser, error) {
 		Reader:      w,
 		WriteCloser: snappy.NewBufferedWriter(w),
 	}, nil
+}
+
+type Decompressor func(net.Conn) (io.Reader, error)
+
+func NewDecompressor(typ string) Decompressor {
+	switch typ {
+	case "snappy":
+		return func(c net.Conn) (io.Reader, error) {
+			return snappy.NewReader(c), nil
+		}
+	case "gzip":
+		return func(c net.Conn) (io.Reader, error) {
+			return gzip.NewReader(c)
+		}
+	default:
+		return func(c net.Conn) (io.Reader, error) {
+			return c, nil
+		}
+	}
 }

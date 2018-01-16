@@ -8,19 +8,19 @@ import (
 	"math"
 	"net"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"time"
-
-	"github.com/pkg/errors"
-
-	"github.com/lomik/zapwriter"
-	"go.uber.org/zap"
 
 	"github.com/go-graphite/g2mt/carbon"
 	"github.com/go-graphite/g2mt/hacks"
 	"github.com/go-graphite/g2mt/queue"
 	"github.com/go-graphite/g2mt/routers"
-	"strings"
-	"sync/atomic"
+	"github.com/go-graphite/g2mt/transport/workers"
+
+	"github.com/lomik/zapwriter"
+	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 type Metrics struct {
@@ -33,7 +33,13 @@ type Config struct {
 	Protocol string
 	Workers  int
 	Strict   bool
+
+	Decompression string `json:"Decompression"`
+
+	Tags Tags // atomic.Value
 }
+
+type Tags map[string]string
 
 type listenerType int
 
@@ -58,6 +64,8 @@ type GraphiteLineReceiver struct {
 	router   routers.Router
 
 	Metrics Metrics
+
+	decompressor workers.Decompressor
 }
 
 const (
@@ -139,6 +147,8 @@ func graphiteLineReceiverInit(listener interface{}, lType listenerType, config C
 	for i := 0; i < config.Workers; i++ {
 		r.processQueue = append(r.processQueue, queue.NewSingleDeliveryQueueByte(int64(queueSize)))
 	}
+
+	r.decompressor = workers.NewDecompressor(config.Decompression)
 	return r
 }
 
@@ -337,8 +347,14 @@ func (l *GraphiteLineReceiver) parseRelaxed(line []byte) (data *carbon.Metric, e
 		return nil, errors.WithMessage(errFmtParseError, "invalid timestamp")
 	}
 
+	metric, tags, err := l.parseTags(line[:s1])
+	if err != nil {
+		return nil, err
+	}
+
 	p := &carbon.Metric{
-		Metric: hacks.UnsafeString(line[:s1]),
+		Metric: metric,
+		Tags:   tags,
 		Points: []carbon.Point{{
 			Value:     value,
 			Timestamp: uint32(ts),
@@ -372,8 +388,14 @@ func (l *GraphiteLineReceiver) Parse(line []byte) (*carbon.Metric, error) {
 		return nil, errors.WithMessage(errFmtParseError, "invalid timestamp")
 	}
 
+	metric, tags, err := l.parseTags(line[:s1])
+	if err != nil {
+		return nil, err
+	}
+
 	p := &carbon.Metric{
-		Metric: hacks.UnsafeString(line[:s1]),
+		Metric: metric,
+		Tags:   tags,
 		Points: []carbon.Point{{
 			Value:     value,
 			Timestamp: uint32(ts),
@@ -381,6 +403,26 @@ func (l *GraphiteLineReceiver) Parse(line []byte) (*carbon.Metric, error) {
 	}
 
 	return p, nil
+}
+
+func (l *GraphiteLineReceiver) parseTags(metricTags []byte) (metric string, tags Tags, err error) {
+	metric = hacks.UnsafeString(metricTags)
+	tags = Tags{}
+	if bytes.Contains(metricTags, []byte(";")) {
+		for i, part := range bytes.Split(metricTags, []byte(";")) {
+			if i == 0 {
+				metric = string(part)
+				continue
+			}
+			pair := bytes.Split(part, []byte("="))
+			if len(pair) != 2 {
+				return metric, tags, errors.WithMessage(errFmtParseError, "")
+			}
+			tags[string(pair[0])] = string(pair[1])
+		}
+	}
+	l.Config.mergeDefaultTags(tags)
+	return metric, tags, nil
 }
 
 func (l *GraphiteLineReceiver) processGraphiteConnection(c net.Conn) {
@@ -394,11 +436,18 @@ func (l *GraphiteLineReceiver) processGraphiteConnection(c net.Conn) {
 		}
 	}()
 
-	reader := bufio.NewReaderSize(c, GraphiteLineReceiverMaxLineSize)
+	dc, err := l.decompressor(c)
+	if err != nil {
+		l.logger.Error("failed to create decompressor",
+			zap.String("decompression", l.Decompression),
+			zap.Error(err),
+		)
+		return
+	}
+	reader := bufio.NewReaderSize(dc, GraphiteLineReceiverMaxLineSize)
 
 	lastRcvDeadline := time.Now()
-	err := c.SetReadDeadline(lastRcvDeadline.Add(l.sendInterval))
-	if err != nil {
+	if err := c.SetReadDeadline(lastRcvDeadline.Add(l.sendInterval)); err != nil {
 		l.logger.Error("failed to set deadline",
 			zap.Error(err),
 		)
@@ -479,6 +528,7 @@ func (l *GraphiteLineReceiver) processGraphiteConnection(c net.Conn) {
 		buffer = append(buffer, line)
 		sentMetrics++
 		if len(buffer) >= l.maxBatchSize || time.Since(lastSentTime) > l.sendInterval {
+			l.logger.Debug("forceChan")
 			forceChan <- struct{}{}
 		}
 	}
@@ -492,5 +542,11 @@ func (l *GraphiteLineReceiver) processGraphiteConnection(c net.Conn) {
 			}
 			time.Sleep(l.sendInterval / 10)
 		}
+	}
+}
+
+func (c *Config) mergeDefaultTags(tags Tags) {
+	for k, v := range c.Tags {
+		tags[k] = v
 	}
 }

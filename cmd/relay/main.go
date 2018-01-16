@@ -7,17 +7,19 @@ import (
 	"log"
 	"runtime"
 
+	"net/http"
+	_ "net/http/pprof"
+
 	"github.com/go-graphite/g2mt/receiver"
 	"github.com/go-graphite/g2mt/transport"
 	"github.com/go-graphite/g2mt/transport/common"
 	"github.com/lomik/zapwriter"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
-	"net/http"
-	_ "net/http/pprof"
+
+	"time"
 
 	"github.com/go-graphite/g2mt/routers"
-	"time"
 )
 
 var defaultLoggerConfig = zapwriter.Config{
@@ -65,6 +67,9 @@ var config = struct {
 	Relay  relayConf
 	Logger []zapwriter.Config `json:"Logger"`
 	Debug  debugConfig
+
+	// Additional tags to be attached graphite metrics
+	Tags map[string]string
 }{
 	/*
 		Configs: []relayConf{{
