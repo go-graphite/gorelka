@@ -8,19 +8,19 @@ import (
 	"math"
 	"net"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"time"
-
-	"github.com/pkg/errors"
-
-	"github.com/lomik/zapwriter"
-	"go.uber.org/zap"
 
 	"github.com/go-graphite/g2mt/carbon"
 	"github.com/go-graphite/g2mt/hacks"
 	"github.com/go-graphite/g2mt/queue"
 	"github.com/go-graphite/g2mt/routers"
-	"strings"
-	"sync/atomic"
+	"github.com/go-graphite/g2mt/transport/workers"
+
+	"github.com/lomik/zapwriter"
+	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 type Metrics struct {
@@ -33,6 +33,10 @@ type Config struct {
 	Protocol string
 	Workers  int
 	Strict   bool
+
+	Decompression string `json:"Decompression"`
+
+	Tags Tags // atomic.Value
 }
 
 type listenerType int
@@ -58,6 +62,8 @@ type GraphiteLineReceiver struct {
 	router   routers.Router
 
 	Metrics Metrics
+
+	decompressor workers.Decompressor
 }
 
 const (
@@ -139,6 +145,8 @@ func graphiteLineReceiverInit(listener interface{}, lType listenerType, config C
 	for i := 0; i < config.Workers; i++ {
 		r.processQueue = append(r.processQueue, queue.NewSingleDeliveryQueueByte(int64(queueSize)))
 	}
+
+	r.decompressor = workers.NewDecompressor(config.Decompression)
 	return r
 }
 
@@ -394,11 +402,18 @@ func (l *GraphiteLineReceiver) processGraphiteConnection(c net.Conn) {
 		}
 	}()
 
-	reader := bufio.NewReaderSize(c, GraphiteLineReceiverMaxLineSize)
+	dc, err := l.decompressor(c)
+	if err != nil {
+		l.logger.Error("failed to create decompressor",
+			zap.String("decompression", l.Decompression),
+			zap.Error(err),
+		)
+		return
+	}
+	reader := bufio.NewReaderSize(dc, GraphiteLineReceiverMaxLineSize)
 
 	lastRcvDeadline := time.Now()
-	err := c.SetReadDeadline(lastRcvDeadline.Add(l.sendInterval))
-	if err != nil {
+	if err := c.SetReadDeadline(lastRcvDeadline.Add(l.sendInterval)); err != nil {
 		l.logger.Error("failed to set deadline",
 			zap.Error(err),
 		)
