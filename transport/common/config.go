@@ -6,9 +6,10 @@ import (
 
 	"encoding/json"
 	"fmt"
+	"strings"
+
 	"github.com/Shopify/sarama"
 	"github.com/go-graphite/g2mt/distribution"
-	"strings"
 )
 
 type OutputEncoding int
@@ -153,6 +154,7 @@ type ConfigForFile struct {
 	TLS                   TLSConfig     `json:"TLS"`
 	Buffered              bool          `json:"Buffered"`
 	// Kafka Transport
+	Version      string              `json:"Version"`
 	Brokers      []string            `json:"Brokers"`
 	RequiredAcks sarama.RequiredAcks `json:"RequiredAcks"`
 	RetryMax     int                 `json:"RetryMax"`
@@ -178,6 +180,7 @@ type Config struct {
 	TLS                   TLSConfig     `json:"TLS"`
 	Buffered              bool          `json:"Buffered"`
 	// Kafka Transport
+	Version      sarama.KafkaVersion `json:"Version"`
 	Brokers      []string            `json:"Brokers"`
 	RequiredAcks sarama.RequiredAcks `json:"RequiredAcks"`
 	RetryMax     int                 `json:"RetryMax"`
@@ -204,6 +207,10 @@ func (c *Config) FromParsed(cfg ConfigForFile) error {
 		return err
 	}
 
+	c.Version, err = sarama.ParseKafkaVersion(cfg.Version)
+	if err != nil {
+		return err
+	}
 	c.Compression = cfg.Compression
 	c.FlushFrequency = cfg.FlushFrequency
 	c.ChannelBufferSize = cfg.ChannelBufferSize

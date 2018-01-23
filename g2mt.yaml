@@ -32,6 +32,7 @@ Relay:
        local2:
           Config:
               Type: "kafka"
+              Version: "0.10.2.0"
               Compression: "snappy"
               Encoding: "json"
               DistributionAlgorithm: "jump_fnv1a"
