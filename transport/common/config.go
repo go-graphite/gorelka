@@ -180,7 +180,7 @@ type Config struct {
 	TLS                   TLSConfig     `json:"TLS"`
 	Buffered              bool          `json:"Buffered"`
 	// Kafka Transport
-	Version      sarama.KafkaVersion `json:"Version"`
+	Version      sarama.KafkaVersion
 	Brokers      []string            `json:"Brokers"`
 	RequiredAcks sarama.RequiredAcks `json:"RequiredAcks"`
 	RetryMax     int                 `json:"RetryMax"`
@@ -207,9 +207,14 @@ func (c *Config) FromParsed(cfg ConfigForFile) error {
 		return err
 	}
 
-	c.Version, err = sarama.ParseKafkaVersion(cfg.Version)
-	if err != nil {
-		return err
+	switch c.Type {
+	case Kafka:
+		{
+			c.Version, err = sarama.ParseKafkaVersion(cfg.Version)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	c.Compression = cfg.Compression
 	c.FlushFrequency = cfg.FlushFrequency

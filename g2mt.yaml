@@ -32,8 +32,10 @@ Relay:
        local2:
           Config:
               Type: "kafka"
+              #   Kafka Version
               Version: "0.10.2.0"
-              Compression: "snappy"
+              #   Compression: lz4, snappy, gzip, none
+              Compression: "lz4"
               Encoding: "json"
               DistributionAlgorithm: "jump_fnv1a"
               #   Total number of partitions in cluster, requried for hashing
@@ -44,6 +46,7 @@ Relay:
               # RequiredAcks: false
               Brokers:
                   - "localhost:9092"
+              Topic: "kafka-topic"
               TLS:
                   Enable: false
                   SkipInsecureCerts: true
