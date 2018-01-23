@@ -48,7 +48,7 @@ func NewKafkaSender(c common.Config, exitChan <-chan struct{}, workers, maxBatch
 	config.Producer.Flush.Frequency = c.FlushFrequency
 	config.ChannelBufferSize = c.ChannelBufferSize
 	config.Producer.Partitioner = sarama.NewManualPartitioner
-	config.Producer.Version = c.Version
+	config.Version = c.Version
 
 	switch strings.ToLower(c.Compression) {
 	case "lz4":
