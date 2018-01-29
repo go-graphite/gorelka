@@ -12,8 +12,8 @@ import (
 	"net"
 	"time"
 
-	"github.com/go-graphite/g2mt/carbon"
-	"github.com/go-graphite/g2mt/routers"
+	"github.com/go-graphite/gorelka/carbon"
+	"github.com/go-graphite/gorelka/routers"
 	"github.com/lomik/zapwriter"
 )
 

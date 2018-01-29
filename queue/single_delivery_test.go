@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"bytes"
-	"github.com/go-graphite/g2mt/carbon"
+	"github.com/go-graphite/gorelka/carbon"
 )
 
 func payloadsEqual(first *carbon.Payload, second *carbon.Payload) bool {

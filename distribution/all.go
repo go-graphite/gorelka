@@ -1,7 +1,7 @@
 package distribution
 
 import (
-	"github.com/go-graphite/g2mt/carbon"
+	"github.com/go-graphite/gorelka/carbon"
 )
 
 type AllDistribution struct {

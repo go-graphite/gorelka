@@ -1,8 +1,8 @@
 package transport
 
 import (
-	"github.com/go-graphite/g2mt/carbon"
-	"github.com/go-graphite/g2mt/transport/common"
+	"github.com/go-graphite/gorelka/carbon"
+	"github.com/go-graphite/gorelka/transport/common"
 	"time"
 )
 

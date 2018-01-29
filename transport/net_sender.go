@@ -5,17 +5,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-graphite/g2mt/carbon"
-	"github.com/go-graphite/g2mt/distribution"
+	"github.com/go-graphite/gorelka/carbon"
+	"github.com/go-graphite/gorelka/distribution"
 
 	"github.com/Shopify/sarama"
 	"github.com/lomik/zapwriter"
 	"go.uber.org/zap"
 
-	"github.com/go-graphite/g2mt/transport/common"
-	"github.com/go-graphite/g2mt/transport/workers"
-	asyncWorker "github.com/go-graphite/g2mt/transport/workers/async"
-	syncWorker "github.com/go-graphite/g2mt/transport/workers/sync"
+	"github.com/go-graphite/gorelka/transport/common"
+	"github.com/go-graphite/gorelka/transport/workers"
+	asyncWorker "github.com/go-graphite/gorelka/transport/workers/async"
+	syncWorker "github.com/go-graphite/gorelka/transport/workers/sync"
 )
 
 type NetSender struct {

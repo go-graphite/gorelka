@@ -1,4 +1,4 @@
-Graphite To Multiple Transports
+gorelka
 -----
 
 This project provides a relay that can accept metrics in various formats (initially Graphite Line protocol) and send them through various ways.

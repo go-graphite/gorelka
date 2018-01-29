@@ -3,7 +3,7 @@ package types
 import (
 	"sync"
 
-	"github.com/go-graphite/g2mt/carbon"
+	"github.com/go-graphite/gorelka/carbon"
 )
 
 // Points

@@ -9,10 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/go-graphite/g2mt/carbon"
-	"github.com/go-graphite/g2mt/encoders/graphite"
-	transport "github.com/go-graphite/g2mt/transport/common"
-	"github.com/go-graphite/g2mt/transport/workers"
+	"github.com/go-graphite/gorelka/carbon"
+	"github.com/go-graphite/gorelka/encoders/graphite"
+	transport "github.com/go-graphite/gorelka/transport/common"
+	"github.com/go-graphite/gorelka/transport/workers"
 	"github.com/lomik/zapwriter"
 	"go.uber.org/zap"
 )

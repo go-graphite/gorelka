@@ -1,8 +1,8 @@
 package routers
 
 import (
-	"github.com/go-graphite/g2mt/carbon"
-	"github.com/go-graphite/g2mt/transport"
+	"github.com/go-graphite/gorelka/carbon"
+	"github.com/go-graphite/gorelka/transport"
 	"github.com/lomik/zapwriter"
 	"testing"
 )

@@ -12,11 +12,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/go-graphite/g2mt/carbon"
-	"github.com/go-graphite/g2mt/hacks"
-	"github.com/go-graphite/g2mt/queue"
-	"github.com/go-graphite/g2mt/routers"
-	"github.com/go-graphite/g2mt/transport/workers"
+	"github.com/go-graphite/gorelka/carbon"
+	"github.com/go-graphite/gorelka/hacks"
+	"github.com/go-graphite/gorelka/queue"
+	"github.com/go-graphite/gorelka/routers"
+	"github.com/go-graphite/gorelka/transport/workers"
 
 	"github.com/lomik/zapwriter"
 	"github.com/pkg/errors"

@@ -10,16 +10,16 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 
-	"github.com/go-graphite/g2mt/receiver"
-	"github.com/go-graphite/g2mt/transport"
-	"github.com/go-graphite/g2mt/transport/common"
+	"github.com/go-graphite/gorelka/receiver"
+	"github.com/go-graphite/gorelka/transport"
+	"github.com/go-graphite/gorelka/transport/common"
 	"github.com/lomik/zapwriter"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 
 	"time"
 
-	"github.com/go-graphite/g2mt/routers"
+	"github.com/go-graphite/gorelka/routers"
 )
 
 var defaultLoggerConfig = zapwriter.Config{

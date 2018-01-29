@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/Shopify/sarama"
-	"github.com/go-graphite/g2mt/distribution"
+	"github.com/go-graphite/gorelka/distribution"
 )
 
 type OutputEncoding int

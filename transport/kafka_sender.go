@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-graphite/g2mt/carbon"
-	"github.com/go-graphite/g2mt/distribution"
-	"github.com/go-graphite/g2mt/encoders/graphite"
-	"github.com/go-graphite/g2mt/transport/common"
+	"github.com/go-graphite/gorelka/carbon"
+	"github.com/go-graphite/gorelka/distribution"
+	"github.com/go-graphite/gorelka/encoders/graphite"
+	"github.com/go-graphite/gorelka/transport/common"
 
 	"github.com/Shopify/sarama"
 	"github.com/lomik/zapwriter"

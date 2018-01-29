@@ -4,7 +4,7 @@ import (
 	"github.com/dgryski/go-jump"
 	"hash/fnv"
 
-	"github.com/go-graphite/g2mt/carbon"
+	"github.com/go-graphite/gorelka/carbon"
 )
 
 type JumpFNV1aDistribution struct {

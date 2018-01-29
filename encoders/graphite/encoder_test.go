@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/go-graphite/g2mt/carbon"
+	"github.com/go-graphite/gorelka/carbon"
 )
 
 func TestGraphiteLineEncoder(t *testing.T) {
