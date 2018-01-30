@@ -1,4 +1,5 @@
-g2mt
+cmd/gorelka-relay/gorelka-relay
+cmd/gorelka-benchmark/gorelka-benchmark
 *.out
 *.test
 .idea

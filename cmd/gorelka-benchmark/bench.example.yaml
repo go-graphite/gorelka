@@ -1,0 +1,27 @@
+---
+sender:
+    type: "tcp"
+    destination: "127.0.0.1:2003"
+    runs: 0
+    metricPattern: "test.%n.%r.conn%c.metric%i"
+    generators:
+        -
+            name: "secondly"
+            connections: 100
+            metricsPerInterval: 100000
+            interval: "1s"
+            dialTimeout: "100ms"
+            sendTimeout: "1s"
+        -
+            name: "minutely"
+            connections: 100
+            metricsPerInterval: 100000
+            interval: "60s"
+            dialTimeout: "100ms"
+            sendTimeout: "1s"
+
+receiver:
+    enabled: true
+    statsInterval: 60s
+    listen: "127.0.0.1:2003"
+    type: "tcp"
