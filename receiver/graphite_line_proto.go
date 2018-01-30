@@ -116,15 +116,15 @@ func NewGraphiteLineReceiver(config Config, router routers.Router, exitChan <-ch
 
 		listener = addr
 	default:
-		return nil, fmt.Errorf("Unknown protocol %v", config.Protocol)
+		return nil, fmt.Errorf("unknown protocol %v", config.Protocol)
 	}
 
 	if router == nil {
-		return nil, fmt.Errorf("Router is not defined")
+		return nil, fmt.Errorf("router is not defined")
 	}
 
 	if sendInterval == 0 {
-		return nil, fmt.Errorf("SendInterval must be >0")
+		return nil, fmt.Errorf("sendInterval must be >0")
 	}
 
 	return graphiteLineReceiverInit(listener, lType, config, router, exitChan, maxBatchSize, queueSize, sendInterval, acceptTimeout), nil

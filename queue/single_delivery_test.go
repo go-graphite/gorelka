@@ -7,6 +7,7 @@ import (
 	"github.com/go-graphite/gorelka/carbon"
 )
 
+/*
 func payloadsEqual(first *carbon.Payload, second *carbon.Payload) bool {
 	if first.Metrics == nil {
 		if second.Metrics == nil {
@@ -133,6 +134,7 @@ func TestSingleDeliveryQueueCarbon(t *testing.T) {
 		t.Errorf("Malformed point. Got: %+v, expected %+v", p, checkPayload)
 	}
 }
+*/
 
 func TestSingleDeliveryQueueByte(t *testing.T) {
 	q := NewSingleDeliveryQueueByte(100)

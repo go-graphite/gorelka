@@ -1019,7 +1019,7 @@ func BenchmarkGraphiteFullPipelineSingleMetric(b *testing.B) {
 	config := Config{
 		Listen:   dir + "/test.unix",
 		Protocol: "unix",
-		Workers:  1,
+		Workers:  runtime.NumCPU(),
 		Strict:   true,
 	}
 	router := routers.NewDummyRouter()

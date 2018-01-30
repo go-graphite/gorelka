@@ -4,10 +4,9 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
-
-	"github.com/go-graphite/gorelka/carbon"
 )
 
+/*
 type SingleDeliveryQueue struct {
 	sync.Mutex
 	data         *carbon.Payload
@@ -57,11 +56,13 @@ func (q *SingleDeliveryQueue) DequeueAll() (*carbon.Payload, bool) {
 	}
 	e := q.data
 	q.data = &carbon.Payload{Metrics: make([]*carbon.Metric, 0, len(q.data.Metrics))}
-	q.nameToMetric = make(map[string]*carbon.Metric)
+	q.nameToMetric = make(map[string]*carbon.Metric, len(q.nameToMetric))
 	q.size = 0
 	q.Unlock()
 	return e, true
 }
+
+*/
 
 var errBufferOverflow = fmt.Errorf("buffer overflow for per/connection input queue")
 
