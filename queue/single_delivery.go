@@ -91,11 +91,11 @@ func (q *SingleDeliveryQueueByte) Len() int64 {
 }
 
 func (q *SingleDeliveryQueueByte) Enqueue(data []byte) error {
-	q.Lock()
-	if q.size >= q.maxSize {
-		q.Unlock()
+	size := q.Len()
+	if size >= q.maxSize {
 		return errBufferOverflow
 	}
+	q.Lock()
 	q.data = append(q.data, data)
 	atomic.AddInt64(&q.size, 1)
 	q.Unlock()
@@ -103,12 +103,11 @@ func (q *SingleDeliveryQueueByte) Enqueue(data []byte) error {
 }
 
 func (q *SingleDeliveryQueueByte) EnqueueMany(data [][]byte) error {
-	q.Lock()
-	if q.size >= q.maxSize {
-		q.Unlock()
+	size := q.Len()
+	if size >= q.maxSize {
 		return errBufferOverflow
 	}
-
+	q.Lock()
 	q.data = append(q.data, data...)
 	atomic.AddInt64(&q.size, int64(len(data)))
 	q.Unlock()
@@ -117,11 +116,11 @@ func (q *SingleDeliveryQueueByte) EnqueueMany(data [][]byte) error {
 }
 
 func (q *SingleDeliveryQueueByte) Dequeue() ([]byte, bool) {
-	q.Lock()
-	if len(q.data) == 0 {
-		q.Unlock()
+	size := q.Len()
+	if size == 0 {
 		return nil, false
 	}
+	q.Lock()
 	e := q.data[0]
 	q.data = q.data[1:]
 	atomic.AddInt64(&q.size, -1)
@@ -130,11 +129,11 @@ func (q *SingleDeliveryQueueByte) Dequeue() ([]byte, bool) {
 }
 
 func (q *SingleDeliveryQueueByte) DequeueAll() ([][]byte, bool) {
-	q.Lock()
-	if len(q.data) == 0 {
-		q.Unlock()
+	size := q.Len()
+	if size == 0 {
 		return nil, false
 	}
+	q.Lock()
 	e := q.data
 	q.data = make([][]byte, 0, len(q.data))
 	atomic.StoreInt64(&q.size, 0)

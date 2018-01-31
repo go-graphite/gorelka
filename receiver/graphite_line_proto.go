@@ -62,10 +62,13 @@ type GraphiteLineReceiver struct {
 	lType    listenerType
 	logger   *zap.Logger
 	router   routers.Router
+	isDebug  bool
 
 	Metrics Metrics
 
 	decompressor workers.Decompressor
+
+	shutdownInProgress int64
 }
 
 const (
@@ -132,14 +135,16 @@ func NewGraphiteLineReceiver(config Config, router routers.Router, exitChan <-ch
 
 func graphiteLineReceiverInit(listener interface{}, lType listenerType, config Config, router routers.Router, exitChan <-chan struct{}, maxBatchSize, queueSize int, sendInterval, acceptTimeout time.Duration) *GraphiteLineReceiver {
 	r := &GraphiteLineReceiver{
-		Config:        config,
-		listener:      listener,
-		lType:         lType,
-		maxBatchSize:  maxBatchSize,
-		exitChan:      exitChan,
-		router:        router,
-		sendInterval:  sendInterval,
-		acceptTimeout: acceptTimeout,
+		Config:             config,
+		listener:           listener,
+		lType:              lType,
+		maxBatchSize:       maxBatchSize,
+		exitChan:           exitChan,
+		router:             router,
+		sendInterval:       sendInterval,
+		acceptTimeout:      acceptTimeout,
+		shutdownInProgress: 0,
+		isDebug:            false,
 
 		logger: zapwriter.Logger("graphite"),
 	}
@@ -167,6 +172,7 @@ func (l *GraphiteLineReceiver) Start() {
 	for {
 		select {
 		case <-l.exitChan:
+			atomic.StoreInt64(&l.shutdownInProgress, 1)
 			switch l.lType {
 			case tcpListener:
 				listener := l.listener.(*net.TCPListener)
@@ -244,8 +250,9 @@ func (l *GraphiteLineReceiver) Start() {
 }
 
 func (l *GraphiteLineReceiver) validateAndParse(id int) {
-	processTicker := time.NewTicker(50 * time.Millisecond)
+	processInterval := l.sendInterval
 	var err error
+	var t0 time.Time
 	var metric *carbon.Metric
 	var parse func(line []byte) (*carbon.Metric, error)
 	if l.Strict {
@@ -256,40 +263,43 @@ func (l *GraphiteLineReceiver) validateAndParse(id int) {
 		parse = l.parseRelaxed
 	}
 	for {
-		select {
-		case <-l.exitChan:
-			processTicker.Stop()
+
+		t0 = time.Now()
+
+		shutdown := atomic.LoadInt64(&l.shutdownInProgress)
+		if shutdown == 1 {
 			return
-		case <-processTicker.C:
-			d, ok := l.processQueue[id].DequeueAll()
-			if !ok {
+		}
+
+		d, ok := l.processQueue[id].DequeueAll()
+		if !ok {
+			continue
+		}
+		payload := carbon.Payload{}
+		for _, line := range d {
+			metric, err = parse(line)
+			if err != nil {
+				l.logger.Error("error parsing line protocol, skipping line",
+					zap.String("line", hacks.UnsafeString(line)),
+					zap.Error(err),
+				)
 				continue
 			}
-			t0 := time.Now()
-			payload := carbon.Payload{}
-			for _, line := range d {
-				metric, err = parse(line)
-				if err != nil {
-					l.logger.Error("error parsing line protocol, skipping line",
-						zap.String("line", hacks.UnsafeString(line)),
-						zap.Error(err),
-					)
-					continue
-				}
-				payload.Metrics = append(payload.Metrics, metric)
-			}
-			if len(payload.Metrics) > 0 {
-
-				dt := time.Since(t0).Nanoseconds()
-				atomic.AddUint64(&l.Metrics.ProcessingTimeNS, uint64(dt))
-				atomic.AddUint64(&l.Metrics.ProcessedMetrics, uint64(len(d)))
-				speed := float64(len(d)) / float64(dt) * 1000000000
-				l.logger.Debug("Parsing done",
-					zap.Float64("speed_metrics_per_second", speed),
-				)
-				go l.router.Route(payload)
-			}
+			payload.Metrics = append(payload.Metrics, metric)
 		}
+
+		if len(payload.Metrics) > 0 {
+			dt := time.Since(t0).Nanoseconds()
+			atomic.AddUint64(&l.Metrics.ProcessingTimeNS, uint64(dt))
+			atomic.AddUint64(&l.Metrics.ProcessedMetrics, uint64(len(d)))
+			speed := float64(len(d)) / float64(dt) * 1000000000
+			l.logger.Debug("Parsing done",
+				zap.Float64("speed_metrics_per_second", speed),
+			)
+
+			go l.router.Route(payload)
+		}
+		time.Sleep(processInterval)
 	}
 }
 
@@ -460,31 +470,12 @@ func (l *GraphiteLineReceiver) processGraphiteConnection(c net.Conn) {
 
 	sentMetrics := 0
 	buffer := make([][]byte, 0)
-	forceChan := make(chan struct{}, 1)
 	cnt := 0
 	lastSentTime := time.Now()
 	for {
-		select {
-		case <-forceChan:
-			cnt++
-			if cnt >= l.Workers {
-				cnt = 0
-			}
-
-			for {
-				err = l.processQueue[cnt].EnqueueMany(buffer)
-				if err == nil {
-					break
-				}
-				time.Sleep(l.sendInterval / 10)
-			}
-
-			buffer = make([][]byte, 0, len(buffer))
-			sentMetrics = 0
-			lastSentTime = time.Now()
-		case <-l.exitChan:
+		shutdown := atomic.LoadInt64(&l.shutdownInProgress)
+		if shutdown == 1 {
 			return
-		default:
 		}
 
 		now := time.Now()
@@ -533,8 +524,23 @@ func (l *GraphiteLineReceiver) processGraphiteConnection(c net.Conn) {
 		buffer = append(buffer, line)
 		sentMetrics++
 		if len(buffer) >= l.maxBatchSize || time.Since(lastSentTime) > l.sendInterval {
-			l.logger.Debug("forceChan")
-			forceChan <- struct{}{}
+			l.logger.Debug("sending data out")
+			cnt++
+			if cnt >= l.Workers {
+				cnt = 0
+			}
+
+			for {
+				err = l.processQueue[cnt].EnqueueMany(buffer)
+				if err == nil {
+					break
+				}
+				time.Sleep(l.sendInterval / 10)
+			}
+
+			buffer = make([][]byte, 0, len(buffer))
+			sentMetrics = 0
+			lastSentTime = time.Now()
 		}
 	}
 
