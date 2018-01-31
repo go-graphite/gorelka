@@ -250,9 +250,11 @@ func (l *GraphiteLineReceiver) Start() {
 }
 
 func (l *GraphiteLineReceiver) validateAndParse(id int) {
-	processInterval := l.sendInterval
+	processInterval := l.sendInterval / 2
+	if processInterval < 100*time.Millisecond {
+		processInterval = 100 * time.Millisecond
+	}
 	var err error
-	var t0 time.Time
 	var metric *carbon.Metric
 	var parse func(line []byte) (*carbon.Metric, error)
 	if l.Strict {
@@ -263,9 +265,6 @@ func (l *GraphiteLineReceiver) validateAndParse(id int) {
 		parse = l.parseRelaxed
 	}
 	for {
-
-		t0 = time.Now()
-
 		shutdown := atomic.LoadInt64(&l.shutdownInProgress)
 		if shutdown == 1 {
 			return
@@ -289,14 +288,6 @@ func (l *GraphiteLineReceiver) validateAndParse(id int) {
 		}
 
 		if len(payload.Metrics) > 0 {
-			dt := time.Since(t0).Nanoseconds()
-			atomic.AddUint64(&l.Metrics.ProcessingTimeNS, uint64(dt))
-			atomic.AddUint64(&l.Metrics.ProcessedMetrics, uint64(len(d)))
-			speed := float64(len(d)) / float64(dt) * 1000000000
-			l.logger.Debug("Parsing done",
-				zap.Float64("speed_metrics_per_second", speed),
-			)
-
 			go l.router.Route(payload)
 		}
 		time.Sleep(processInterval)
