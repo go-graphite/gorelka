@@ -10,11 +10,17 @@ import (
 
 	"github.com/go-graphite/gorelka/carbon"
 	"github.com/go-graphite/gorelka/encoders/graphite"
+	"github.com/go-graphite/gorelka/queue"
 	transport "github.com/go-graphite/gorelka/transport/common"
 	"github.com/go-graphite/gorelka/transport/workers"
 	"github.com/lomik/zapwriter"
 	"go.uber.org/zap"
 )
+
+type errorSignals struct {
+	connectionError bool
+	compressorError bool
+}
 
 type syncWorker struct {
 	id    int
@@ -30,10 +36,11 @@ type syncWorker struct {
 	exitChan       <-chan struct{}
 	reconnectChan  chan struct{}
 	leftoversQueue chan []byte
-	queue          chan *carbon.Metric
+	queue          *queue.SingleDeliveryQueue
 	stats          workers.WorkerStats
 
-	logger *zap.Logger
+	logger       *zap.Logger
+	errorSignals errorSignals
 }
 
 func (w *syncWorker) TryConnect() {
@@ -59,23 +66,39 @@ func (w *syncWorker) TryConnect() {
 				}
 
 				if err != nil {
-					w.logger.Error("error while connecting to upstream",
-						zap.Error(err),
-					)
+					if !w.errorSignals.connectionError {
+						w.logger.Error("error while connecting to upstream",
+							zap.Error(err),
+						)
+						w.errorSignals.connectionError = true
+					}
 					atomic.AddInt64(&w.stats.ConnectErrors, 1)
 					time.Sleep(250 * time.Millisecond)
 					continue
 				}
 
+				if w.errorSignals.connectionError {
+					w.logger.Info("connection restored")
+					w.errorSignals.connectionError = false
+				}
+
 				w.writer, err = w.compressor(conn)
 				if err != nil {
-					w.logger.Error("error initializing compressor",
-						zap.Error(err),
-					)
+					if !w.errorSignals.compressorError {
+						w.logger.Error("error initializing compressor",
+							zap.Error(err),
+						)
+						w.errorSignals.compressorError = true
+					}
 					atomic.AddInt64(&w.stats.ConnectErrors, 1)
 					conn.Close()
 					time.Sleep(250 * time.Millisecond)
 					continue
+				}
+
+				if w.errorSignals.compressorError {
+					w.logger.Info("compression initialized")
+					w.errorSignals.compressorError = false
 				}
 				atomic.StoreInt64(&w.alive, 1)
 				go w.Loop()
@@ -133,7 +156,14 @@ func (w *syncWorker) Loop() {
 		case data := <-w.leftoversQueue:
 			w.logger.Debug("got some leftovers")
 			w.writer.Write(data)
-		case metric := <-w.queue:
+		default:
+		}
+		payloads, done := w.queue.DequeueAll()
+		if !done {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		for _, metric := range payloads.Metrics {
 			w.logger.Debug("will send some data")
 			err := w.send(metric)
 			if err != nil {
@@ -151,21 +181,17 @@ func (w *syncWorker) Loop() {
 					}
 
 				}
+
 				w.writer.Close()
-				select {
-				case w.queue <- metric:
-				default:
-					atomic.AddInt64(&w.stats.DroppedPoints, 1)
-					w.logger.Debug("queue is full, point dropped")
-				}
 				w.reconnectChan <- struct{}{}
+				w.queue.Enqueue(payloads)
 				return
 			}
 		}
 	}
 }
 
-func NewSyncWorker(id int, config transport.Config, queue chan *carbon.Metric, exitChan <-chan struct{}) *syncWorker {
+func NewSyncWorker(id int, config transport.Config, queue *queue.SingleDeliveryQueue, exitChan <-chan struct{}) *syncWorker {
 	l := zapwriter.Logger("worker").With(
 		zap.Int("id", id),
 		zap.String("server", config.Servers[id]),
@@ -203,6 +229,7 @@ func NewSyncWorker(id int, config transport.Config, queue chan *carbon.Metric, e
 
 	go w.TryConnect()
 	w.reconnectChan <- struct{}{}
+	l.Info("sync worker started")
 
 	return w
 }

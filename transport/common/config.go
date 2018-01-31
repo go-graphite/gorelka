@@ -150,6 +150,7 @@ type ConfigForFile struct {
 	DistributionAlgorithm string        `json:"DistributionAlgorithm"`
 	Encoding              string        `json:"Encoding"`
 	FlushFrequency        time.Duration `json:"FlushFrequency"`
+	SendInterval          time.Duration `json:"SendInterval"`
 	ChannelBufferSize     int           `json:"ChannelBufferSize"`
 	TLS                   TLSConfig     `json:"TLS"`
 	Buffered              bool          `json:"Buffered"`
@@ -176,6 +177,7 @@ type Config struct {
 	DistributionAlgorithm distribution.Algorithm
 	Encoding              OutputEncoding
 	FlushFrequency        time.Duration `json:"FlushFrequency"`
+	SendInterval          time.Duration `json:"SendInterval"`
 	ChannelBufferSize     int           `json:"ChannelBufferSize"`
 	TLS                   TLSConfig     `json:"TLS"`
 	Buffered              bool          `json:"Buffered"`
@@ -218,6 +220,7 @@ func (c *Config) FromParsed(cfg ConfigForFile) error {
 	}
 	c.Compression = cfg.Compression
 	c.FlushFrequency = cfg.FlushFrequency
+	c.SendInterval = cfg.SendInterval
 	c.ChannelBufferSize = cfg.ChannelBufferSize
 	c.TLS = cfg.TLS
 	c.Buffered = cfg.Buffered

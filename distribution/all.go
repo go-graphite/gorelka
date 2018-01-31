@@ -14,6 +14,10 @@ func NewAllDistribution(name string) *AllDistribution {
 	}
 }
 
+func (d *AllDistribution) IsAll() bool {
+	return true
+}
+
 func (d *AllDistribution) MetricToShard(metric *carbon.Metric) int {
 	return -1
 }

@@ -144,6 +144,10 @@ func graphiteLineReceiverInit(listener interface{}, lType listenerType, config C
 		logger: zapwriter.Logger("graphite"),
 	}
 
+	r.logger.Debug("initializing graphite receiver",
+		zap.Int("workers", config.Workers),
+	)
+
 	for i := 0; i < config.Workers; i++ {
 		r.processQueue = append(r.processQueue, queue.NewSingleDeliveryQueueByte(int64(queueSize)))
 	}
@@ -240,7 +244,7 @@ func (l *GraphiteLineReceiver) Start() {
 }
 
 func (l *GraphiteLineReceiver) validateAndParse(id int) {
-	processTicker := time.NewTicker(5 * time.Millisecond)
+	processTicker := time.NewTicker(50 * time.Millisecond)
 	var err error
 	var metric *carbon.Metric
 	var parse func(line []byte) (*carbon.Metric, error)
@@ -266,7 +270,7 @@ func (l *GraphiteLineReceiver) validateAndParse(id int) {
 			for _, line := range d {
 				metric, err = parse(line)
 				if err != nil {
-					l.logger.Error("error parsing line protocol",
+					l.logger.Error("error parsing line protocol, skipping line",
 						zap.String("line", hacks.UnsafeString(line)),
 						zap.Error(err),
 					)
@@ -462,6 +466,11 @@ func (l *GraphiteLineReceiver) processGraphiteConnection(c net.Conn) {
 	for {
 		select {
 		case <-forceChan:
+			cnt++
+			if cnt >= l.Workers {
+				cnt = 0
+			}
+
 			for {
 				err = l.processQueue[cnt].EnqueueMany(buffer)
 				if err == nil {
@@ -470,11 +479,7 @@ func (l *GraphiteLineReceiver) processGraphiteConnection(c net.Conn) {
 				time.Sleep(l.sendInterval / 10)
 			}
 
-			cnt++
-			if cnt >= l.Workers {
-				cnt = 0
-			}
-			buffer = make([][]byte, 0)
+			buffer = make([][]byte, 0, len(buffer))
 			sentMetrics = 0
 			lastSentTime = time.Now()
 		case <-l.exitChan:
@@ -536,7 +541,7 @@ func (l *GraphiteLineReceiver) processGraphiteConnection(c net.Conn) {
 	l.logger.Debug("Connection closed. Flushing buffer")
 	if len(buffer) > 0 {
 		for {
-			err = l.processQueue[0].EnqueueMany(buffer)
+			err = l.processQueue[cnt].EnqueueMany(buffer)
 			if err == nil {
 				break
 			}

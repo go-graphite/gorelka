@@ -3,13 +3,12 @@ package transport
 import (
 	"github.com/go-graphite/gorelka/carbon"
 	"github.com/go-graphite/gorelka/transport/common"
-	"time"
 )
 
 type Sender interface {
 	Start()
-	Send(metric *carbon.Metric)
+	Send(payload *carbon.Payload)
 	GetName() string
 }
 
-type SenderInitFunc func(c common.Config, exitChan <-chan struct{}, workers, maxBatchSize int, sendInterval time.Duration) (Sender, error)
+type SenderInitFunc func(c common.Config, exitChan <-chan struct{}, workers, maxBatchSize int) (Sender, error)

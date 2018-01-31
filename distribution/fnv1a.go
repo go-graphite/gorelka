@@ -19,6 +19,10 @@ func NewFNV1aDistribution(name string, shards int) *FNV1aDistribution {
 	}
 }
 
+func (d *FNV1aDistribution) IsAll() bool {
+	return false
+}
+
 func (d *FNV1aDistribution) MetricToShard(metric *carbon.Metric) int {
 	hf := fnv.New64a()
 	_, _ = hf.Write([]byte(metric.Metric))

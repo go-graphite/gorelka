@@ -127,14 +127,24 @@ func (r *RelayRouter) Reload(senders []transport.Sender, config Config) bool {
 	return false
 }
 
+type senderDetails struct {
+	metricsMap map[string]*carbon.Metric
+	sender     transport.Sender
+	payload    carbon.Payload
+}
+
 // Route allows to route bunch of metrics
 func (r *RelayRouter) Route(payload carbon.Payload) {
+	res := make(map[string]*senderDetails)
 	for _, metric := range payload.Metrics {
-		r.routeMetric(metric, 0)
+		r.routeMetric(res, metric, 0)
+	}
+	for _, d := range res {
+		d.sender.Send(&d.payload)
 	}
 }
 
-func (r *RelayRouter) routeMetric(metric *carbon.Metric, iteration int) {
+func (r *RelayRouter) routeMetric(res map[string]*senderDetails, metric *carbon.Metric, iteration int) {
 	var err error
 	var re *regexp.Regexp
 
@@ -266,7 +276,7 @@ func (r *RelayRouter) routeMetric(metric *carbon.Metric, iteration int) {
 				Metric: name,
 				Points: metric.Points,
 			}
-			r.routeMetric(newMetric, iteration+1)
+			r.routeMetric(res, newMetric, iteration+1)
 		}
 		if !match.saveOriginalOnRewrite {
 			return
@@ -294,6 +304,22 @@ func (r *RelayRouter) routeMetric(metric *carbon.Metric, iteration int) {
 			zap.String("metric", metric.Metric),
 			zap.Any("sender", sender),
 		)
-		sender.Send(metric)
+		name := sender.GetName()
+		if s, ok := res[name]; ok {
+			if m, ok := s.metricsMap[metric.Metric]; ok {
+				m.Points = append(m.Points, metric.Points...)
+			} else {
+				s.metricsMap[metric.Metric] = metric
+				s.payload.Metrics = append(s.payload.Metrics, metric)
+			}
+		} else {
+			res[name] = &senderDetails{
+				metricsMap: make(map[string]*carbon.Metric),
+				sender:     sender,
+				payload: carbon.Payload{
+					Metrics: []*carbon.Metric{metric},
+				},
+			}
+		}
 	}
 }

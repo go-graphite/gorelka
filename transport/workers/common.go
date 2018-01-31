@@ -11,6 +11,7 @@ import (
 type WorkerStats struct {
 	SpentTime     int64
 	SentPoints    int64
+	SentMetrics   int64
 	SendErrors    int64
 	MarshalErrors int64
 	ConnectErrors int64

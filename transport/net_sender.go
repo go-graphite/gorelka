@@ -3,7 +3,6 @@ package transport
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/go-graphite/gorelka/carbon"
 	"github.com/go-graphite/gorelka/distribution"
@@ -12,6 +11,7 @@ import (
 	"github.com/lomik/zapwriter"
 	"go.uber.org/zap"
 
+	"github.com/go-graphite/gorelka/queue"
 	"github.com/go-graphite/gorelka/transport/common"
 	"github.com/go-graphite/gorelka/transport/workers"
 	asyncWorker "github.com/go-graphite/gorelka/transport/workers/async"
@@ -25,10 +25,9 @@ type NetSender struct {
 
 	kafka        sarama.AsyncProducer
 	exitChan     <-chan struct{}
-	queues       []chan *carbon.Metric
+	queues       []*queue.SingleDeliveryQueue
 	maxBatchSize int
 	workers      int
-	sendInterval time.Duration
 
 	kafkaConfig *sarama.Config
 
@@ -45,7 +44,7 @@ func serverToPortAddr(server string) (string, string) {
 	return server[0:idx], server[idx:]
 }
 
-func NewNetSender(c common.Config, exitChan <-chan struct{}, workers, maxBatchSize int, sendInterval time.Duration) (Sender, error) {
+func NewNetSender(c common.Config, exitChan <-chan struct{}, workers, maxBatchSize int) (Sender, error) {
 	if len(c.Servers) <= 0 {
 		return nil, fmt.Errorf("invalid amount of servers (%v), should be at least 1", len(c.Servers))
 	}
@@ -66,7 +65,6 @@ func NewNetSender(c common.Config, exitChan <-chan struct{}, workers, maxBatchSi
 		kafka:            nil,
 		exitChan:         exitChan,
 		maxBatchSize:     maxBatchSize,
-		sendInterval:     sendInterval,
 		workers:          workers,
 		distributionFunc: distributionFunc,
 
@@ -74,7 +72,8 @@ func NewNetSender(c common.Config, exitChan <-chan struct{}, workers, maxBatchSi
 	}
 
 	for i := 0; i < len(c.Servers); i++ {
-		sender.queues = append(sender.queues, make(chan *carbon.Metric, c.ChannelBufferSize))
+		q := queue.NewSingleDeliveryQueue(int64(c.ChannelBufferSize))
+		sender.queues = append(sender.queues, q)
 	}
 
 	return sender, nil
@@ -84,18 +83,29 @@ func (k *NetSender) GetName() string {
 	return k.Name
 }
 
-func (k *NetSender) Send(metric *carbon.Metric) {
-	queueId := k.distributionFunc.MetricToShard(metric)
-	k.logger.Debug("got data to send",
-		zap.Int("queue_id", queueId),
-	)
-	if queueId == -1 {
+func (k *NetSender) Send(metric *carbon.Payload) {
+	payloads := make([]carbon.Payload, len(k.queues))
+	for _, p := range payloads {
+		p.Metrics = make([]*carbon.Metric, 0)
+	}
+	if k.distributionFunc.IsAll() {
 		for i := range k.queues {
-			k.queues[i] <- metric
+			k.queues[i].Enqueue(metric)
 		}
 		return
 	}
-	k.queues[queueId] <- metric
+
+	for _, m := range metric.Metrics {
+		queueId := k.distributionFunc.MetricToShard(m)
+		payloads[queueId].Metrics = append(payloads[queueId].Metrics, m)
+	}
+
+	for queueId, payload := range payloads {
+		k.logger.Debug("got data to send",
+			zap.Int("queue_id", queueId),
+		)
+		k.queues[queueId].Enqueue(&payload)
+	}
 }
 
 func (k *NetSender) Start() {

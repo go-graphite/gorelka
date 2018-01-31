@@ -13,6 +13,7 @@ import (
 	"github.com/go-graphite/gorelka/transport/common"
 
 	"github.com/Shopify/sarama"
+	"github.com/go-graphite/gorelka/queue"
 	"github.com/lomik/zapwriter"
 	"go.uber.org/zap"
 )
@@ -24,7 +25,7 @@ type KafkaSender struct {
 
 	kafka        sarama.AsyncProducer
 	exitChan     <-chan struct{}
-	queues       []chan *carbon.Metric
+	queues       []*queue.SingleDeliveryQueue
 	maxBatchSize int
 	workers      int
 	sendInterval time.Duration
@@ -37,7 +38,7 @@ type KafkaSender struct {
 	distributionFunc       distribution.Distribute
 }
 
-func NewKafkaSender(c common.Config, exitChan <-chan struct{}, workers, maxBatchSize int, sendInterval time.Duration) (Sender, error) {
+func NewKafkaSender(c common.Config, exitChan <-chan struct{}, workers, maxBatchSize int) (Sender, error) {
 	if c.Shards <= 0 {
 		return nil, fmt.Errorf("invalid amount of shards (%v), should be at least 1", c.Shards)
 	}
@@ -85,7 +86,7 @@ func NewKafkaSender(c common.Config, exitChan <-chan struct{}, workers, maxBatch
 		kafka:                  nil,
 		exitChan:               exitChan,
 		maxBatchSize:           maxBatchSize,
-		sendInterval:           sendInterval,
+		sendInterval:           c.SendInterval,
 		workers:                workers,
 		mightHaveDataToProcess: make(chan struct{}),
 		distributionFunc:       distributionFunc,
@@ -94,7 +95,8 @@ func NewKafkaSender(c common.Config, exitChan <-chan struct{}, workers, maxBatch
 	}
 
 	for i := 0; i < c.Shards; i++ {
-		sender.queues = append(sender.queues, make(chan *carbon.Metric))
+		q := queue.NewSingleDeliveryQueue(int64(maxBatchSize))
+		sender.queues = append(sender.queues, q)
 	}
 
 	return sender, nil
@@ -153,7 +155,7 @@ func (k *KafkaSender) sendToKafka(payload *carbon.Payload) {
 	)
 }
 
-func (k *KafkaSender) worker(queue chan *carbon.Metric) {
+func (k *KafkaSender) worker(queue *queue.SingleDeliveryQueue) {
 	metricsMap := make(map[string]*carbon.Metric)
 	data := &carbon.Payload{}
 	ticker := time.NewTicker(k.sendInterval)
@@ -162,7 +164,21 @@ func (k *KafkaSender) worker(queue chan *carbon.Metric) {
 		select {
 		case <-k.exitChan:
 			return
-		case newMetric := <-queue:
+		case <-ticker.C:
+			if k.kafka != nil {
+				k.sendToKafka(data)
+				data = &carbon.Payload{}
+				metricsMap = make(map[string]*carbon.Metric)
+			}
+		default:
+		}
+
+		payload, ok := queue.DequeueAll()
+		if !ok {
+			time.Sleep(k.sendInterval / 10)
+			continue
+		}
+		for _, newMetric := range payload.Metrics {
 			k.logger.Info("kafka sender got metric")
 			if m, ok := metricsMap[newMetric.Metric]; ok {
 				m.Points = append(m.Points, newMetric.Points...)
@@ -170,26 +186,30 @@ func (k *KafkaSender) worker(queue chan *carbon.Metric) {
 				metricsMap[newMetric.Metric] = newMetric
 				data.Metrics = append(data.Metrics, newMetric)
 			}
-		case <-ticker.C:
-			if k.kafka != nil {
-				k.sendToKafka(data)
-				data = &carbon.Payload{}
-				metricsMap = make(map[string]*carbon.Metric)
-			}
 		}
-
 	}
 }
 
-func (k *KafkaSender) Send(metric *carbon.Metric) {
-	queueId := k.distributionFunc.MetricToShard(metric)
-	if queueId == -1 {
+func (k *KafkaSender) Send(metric *carbon.Payload) {
+	payloads := make([]*carbon.Payload, len(k.queues))
+	if k.distributionFunc.IsAll() {
 		for i := range k.queues {
-			k.queues[i] <- metric
+			k.queues[i].Enqueue(metric)
 		}
 		return
 	}
-	k.queues[queueId] <- metric
+
+	for _, m := range metric.Metrics {
+		queueId := k.distributionFunc.MetricToShard(m)
+		payloads[queueId].Metrics = append(payloads[queueId].Metrics, m)
+	}
+
+	for queueId, payload := range payloads {
+		k.logger.Debug("got data to send",
+			zap.Int("queue_id", queueId),
+		)
+		k.queues[queueId].Enqueue(payload)
+	}
 }
 
 func (k *KafkaSender) tryToConnect() {

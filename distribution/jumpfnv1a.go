@@ -20,6 +20,10 @@ func NewJumpFNV1aDistribution(name string, shards int) *JumpFNV1aDistribution {
 	}
 }
 
+func (d *JumpFNV1aDistribution) IsAll() bool {
+	return false
+}
+
 func (d *JumpFNV1aDistribution) MetricToShard(metric *carbon.Metric) int {
 	hf := fnv.New64a()
 	_, _ = hf.Write([]byte(metric.Metric))

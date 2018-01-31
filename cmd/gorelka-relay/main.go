@@ -32,7 +32,8 @@ var defaultLoggerConfig = zapwriter.Config{
 }
 
 type debugConfig struct {
-	Listen string
+	Listen               string
+	MutexProfileFraction int
 }
 
 type receiverConfig struct {
@@ -53,14 +54,13 @@ type routerConfig struct {
 }
 
 type relayConf struct {
-	Destinations          map[string]destinationsConfig
-	Listeners             map[string]receiverConfig
-	Routers               map[string]routerConfig
-	MaxBatchSize          int
-	TransportWorkers      int
-	TransportChanCapacity int
-	SendInterval          time.Duration
-	QueueSize             int
+	Destinations     map[string]destinationsConfig
+	Listeners        map[string]receiverConfig
+	Routers          map[string]routerConfig
+	MaxBatchSize     int
+	TransportWorkers int
+	SendInterval     time.Duration
+	QueueSize        int
 }
 
 var config = struct {
@@ -178,6 +178,29 @@ func validateConfig() {
 		}
 	}
 
+	for k, cfg := range config.Relay.Destinations {
+		changesNeeded := false
+		if cfg.Config.SendInterval == 0 {
+			cfg.Config.SendInterval = 100 * time.Millisecond
+			changesNeeded = true
+		}
+		if cfg.Config.FlushFrequency == 0 {
+			cfg.Config.FlushFrequency = 200 * time.Millisecond
+			changesNeeded = true
+		}
+		if cfg.Config.ChannelBufferSize == 0 {
+			cfg.Config.ChannelBufferSize = 1000000
+			changesNeeded = true
+		}
+		if changesNeeded {
+			config.Relay.Destinations[k] = cfg
+		}
+	}
+
+	if config.Relay.MaxBatchSize == 0 {
+		config.Relay.MaxBatchSize = 1000000
+	}
+
 	if config.Relay.QueueSize == 0 {
 		config.Relay.QueueSize = 1000000
 	}
@@ -246,12 +269,16 @@ func main() {
 		)
 	}
 
+	validateConfig()
+
 	logger.Info("starting",
 		zap.String("config_file_used", viper.ConfigFileUsed()),
 		zap.Any("config", config),
 	)
 
-	validateConfig()
+	if config.Debug.MutexProfileFraction > 0 {
+		runtime.SetMutexProfileFraction(config.Debug.MutexProfileFraction)
+	}
 
 	exitChan := make(chan struct{})
 
@@ -282,7 +309,7 @@ func main() {
 			)
 		}
 
-		sender, err := senderInit(c, exitChan, config.Relay.TransportWorkers, config.Relay.MaxBatchSize, config.Relay.SendInterval)
+		sender, err := senderInit(c, exitChan, config.Relay.TransportWorkers, config.Relay.MaxBatchSize)
 		if err != nil {
 			logger.Fatal("failed to start transport",
 				zap.Error(err),

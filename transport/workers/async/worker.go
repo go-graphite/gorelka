@@ -2,7 +2,6 @@ package async
 
 import (
 	"crypto/tls"
-	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -11,29 +10,105 @@ import (
 
 	"github.com/go-graphite/gorelka/carbon"
 	"github.com/go-graphite/gorelka/encoders/graphite"
+	"github.com/go-graphite/gorelka/queue"
 	transport "github.com/go-graphite/gorelka/transport/common"
 	"github.com/go-graphite/gorelka/transport/workers"
 	"github.com/lomik/zapwriter"
 	"go.uber.org/zap"
 )
 
+type errorSignals struct {
+	connectionError bool
+	compressorError bool
+}
+
 type asyncWorker struct {
 	id    int
 	alive int64
 
-	sendInterval time.Duration
-	tls          *transport.TLSConfig
-	server       string
-	proto        string
+	tls    *transport.TLSConfig
+	server string
+	proto  string
 
-	compressor func(w net.Conn) (io.ReadWriteCloser, error)
-	marshaller func(payload *carbon.Payload) ([]byte, error)
-	writer     io.ReadWriteCloser
-	exitChan   <-chan struct{}
-	queue      chan *carbon.Metric
-	stats      workers.WorkerStats
+	compressor    func(w net.Conn) (io.ReadWriteCloser, error)
+	marshaller    func(payload *carbon.Payload) ([]byte, error)
+	writer        io.ReadWriteCloser
+	exitChan      <-chan struct{}
+	reconnectChan chan struct{}
+	queue         *queue.SingleDeliveryQueue
+	stats         workers.WorkerStats
+	sendInterval  time.Duration
+	maxBufferSize int
 
-	logger *zap.Logger
+	logger       *zap.Logger
+	errorSignals errorSignals
+}
+
+func (w *asyncWorker) TryConnect() {
+	for {
+		select {
+		case <-w.exitChan:
+			return
+		case <-w.reconnectChan:
+			for {
+				w.logger.Debug("trying to connect")
+
+				var conn net.Conn
+				var err error
+				if w.tls.Enabled {
+					// srv, port := serverToPortAddr(s)
+					tlsConfig := &tls.Config{
+						InsecureSkipVerify: w.tls.SkipInsecureCerts,
+						ServerName:         w.server,
+					}
+					conn, err = tls.Dial(w.proto, w.server, tlsConfig)
+				} else {
+					conn, err = net.Dial(w.proto, w.server)
+				}
+
+				if err != nil {
+					if !w.errorSignals.connectionError {
+						w.logger.Error("error while connecting to upstream",
+							zap.Error(err),
+						)
+						w.errorSignals.connectionError = true
+					}
+					atomic.AddInt64(&w.stats.ConnectErrors, 1)
+					time.Sleep(250 * time.Millisecond)
+					continue
+				}
+
+				if w.errorSignals.connectionError {
+					w.logger.Info("connection restored")
+					w.errorSignals.connectionError = false
+				}
+
+				w.writer, err = w.compressor(conn)
+				if err != nil {
+					if !w.errorSignals.compressorError {
+						w.logger.Error("error initializing compressor",
+							zap.Error(err),
+						)
+						w.errorSignals.compressorError = true
+					}
+					atomic.AddInt64(&w.stats.ConnectErrors, 1)
+					conn.Close()
+					time.Sleep(250 * time.Millisecond)
+					continue
+				}
+
+				if w.errorSignals.compressorError {
+					w.logger.Info("compression initialized")
+					w.errorSignals.compressorError = false
+				}
+				atomic.StoreInt64(&w.alive, 1)
+				go w.Loop()
+				w.logger.Debug("connection established")
+				break
+			}
+		}
+
+	}
 }
 
 func (w asyncWorker) IsAlive() bool {
@@ -44,62 +119,26 @@ func (w asyncWorker) IsAlive() bool {
 
 func (w *asyncWorker) GetStats() *workers.WorkerStats {
 	stats := &workers.WorkerStats{
-		SpentTime:  atomic.LoadInt64(&w.stats.SpentTime),
-		SentPoints: atomic.LoadInt64(&w.stats.SentPoints),
-		SendErrors: atomic.LoadInt64(&w.stats.SendErrors),
+		SpentTime:   atomic.LoadInt64(&w.stats.SpentTime),
+		SentPoints:  atomic.LoadInt64(&w.stats.SentPoints),
+		SentMetrics: atomic.LoadInt64(&w.stats.SentMetrics),
+		SendErrors:  atomic.LoadInt64(&w.stats.SendErrors),
 	}
 
 	return stats
 }
 
-var errWorkerIsNotAlive = fmt.Errorf("connection is not established")
-
-func (w *asyncWorker) TryConnect() {
-	for {
-		time.Sleep(250 * time.Millisecond)
-		if w.IsAlive() {
-			continue
-		}
-
-		var conn net.Conn
-		var err error
-		if w.tls.Enabled {
-			// srv, port := serverToPortAddr(s)
-			tlsConfig := &tls.Config{
-				InsecureSkipVerify: w.tls.SkipInsecureCerts,
-				ServerName:         w.server,
-			}
-			conn, err = tls.Dial(w.proto, w.server, tlsConfig)
-		} else {
-			conn, err = net.Dial(w.proto, w.server)
-		}
-
-		if err != nil {
-			// TODO: log error
-			atomic.AddInt64(&w.stats.ConnectErrors, 1)
-			continue
-		}
-
-		w.writer, err = w.compressor(conn)
-		if err != nil {
-			// TODO: log error
-			atomic.AddInt64(&w.stats.ConnectErrors, 1)
-			conn.Close()
-			continue
-		}
-		atomic.StoreInt64(&w.alive, 1)
-	}
-}
-
 func (w *asyncWorker) send(payload *carbon.Payload) error {
-	if !w.IsAlive() {
-		return errWorkerIsNotAlive
-	}
-	if len(payload.Metrics) == 0 {
-		return nil
-	}
-
 	t0 := time.Now()
+	pointsToSend := int64(0)
+	for m := range payload.Metrics {
+		pointsToSend += int64(len(payload.Metrics[m].Points))
+	}
+	metricsToSend := int64(len(payload.Metrics))
+	w.logger.Debug("marshaled some data",
+		zap.Int64("metrics", metricsToSend),
+		zap.Int64("points", pointsToSend),
+	)
 	data, err := w.marshaller(payload)
 	if err != nil {
 		atomic.AddInt64(&w.stats.MarshalErrors, 1)
@@ -112,58 +151,82 @@ func (w *asyncWorker) send(payload *carbon.Payload) error {
 		return err
 	}
 
-	l := int64(0)
-	for i := range payload.Metrics {
-		l += int64(len(payload.Metrics[i].Points))
-	}
-
 	spentTime := time.Since(t0).Nanoseconds()
 	atomic.AddInt64(&w.stats.SpentTime, spentTime)
-	atomic.AddInt64(&w.stats.SentPoints, l)
+	atomic.AddInt64(&w.stats.SentPoints, pointsToSend)
+	atomic.AddInt64(&w.stats.SentMetrics, metricsToSend)
 
 	return nil
 }
 
 func (w *asyncWorker) Loop() {
-	metricsMap := make(map[string]*carbon.Metric)
-	data := &carbon.Payload{}
-	ticker := time.NewTicker(w.sendInterval)
+	seenMetrics := make(map[string]*carbon.Metric)
+	metrics := &carbon.Payload{Metrics: make([]*carbon.Metric, 0)}
+	metricsLen := 0
+	lastSend := time.Now()
 	for {
 		select {
 		case <-w.exitChan:
 			return
-		case newMetric := <-w.queue:
-			if m, ok := metricsMap[newMetric.Metric]; ok {
-				m.Points = append(m.Points, newMetric.Points...)
+		default:
+		}
+		payloads, done := w.queue.DequeueAll()
+		if !done {
+			time.Sleep(w.sendInterval / 10)
+			continue
+		}
+		for _, metric := range payloads.Metrics {
+			metricsLen++
+			if m, ok := seenMetrics[metric.Metric]; ok {
+				m.Points = append(m.Points, metric.Points...)
 			} else {
-				metricsMap[newMetric.Metric] = newMetric
-				data.Metrics = append(data.Metrics, newMetric)
+				seenMetrics[metric.Metric] = metric
+				metrics.Metrics = append(metrics.Metrics, metric)
 			}
-		case <-ticker.C:
-			err := w.send(data)
-			if err == nil {
-				data = &carbon.Payload{Metrics: make([]*carbon.Metric, 0, len(data.Metrics))}
-				metricsMap = make(map[string]*carbon.Metric)
+
+			timeSpent := time.Since(lastSend)
+			if timeSpent > w.sendInterval || metricsLen > w.maxBufferSize {
+				w.logger.Debug("will send some data",
+					zap.Duration("timePassed", timeSpent),
+					zap.Duration("sendInterval", w.sendInterval),
+					zap.Int("metricsBuffered", metricsLen),
+					zap.Int("maxBufferSize", w.maxBufferSize),
+				)
+				err := w.send(metrics)
+				if err != nil {
+					w.logger.Error("error while sending data",
+						zap.Error(err),
+					)
+					// TODO: Drop points if overflow
+					w.writer.Close()
+					w.reconnectChan <- struct{}{}
+					continue
+				}
+				lastSend = time.Now()
+				seenMetrics = make(map[string]*carbon.Metric, len(seenMetrics))
+				metricsLen = 0
+				metrics = &carbon.Payload{Metrics: make([]*carbon.Metric, 0, len(metrics.Metrics))}
 			}
 		}
-
 	}
 }
 
-func NewAsyncWorker(id int, config transport.Config, queue chan *carbon.Metric, exitChan <-chan struct{}) *asyncWorker {
+func NewAsyncWorker(id int, config transport.Config, queue *queue.SingleDeliveryQueue, exitChan <-chan struct{}) *asyncWorker {
 	l := zapwriter.Logger("worker").With(
 		zap.Int("id", id),
-		zap.String("server", config.Servers[id]),
 	)
+
 	w := &asyncWorker{
-		id:           id,
-		exitChan:     exitChan,
-		queue:        queue,
-		sendInterval: config.FlushFrequency,
-		server:       config.Servers[id],
-		tls:          &config.TLS,
-		proto:        config.Type.String(),
-		logger:       l,
+		id:            id,
+		exitChan:      exitChan,
+		queue:         queue,
+		server:        config.Servers[id],
+		tls:           &config.TLS,
+		proto:         config.Type.String(),
+		logger:        l,
+		reconnectChan: make(chan struct{}),
+		sendInterval:  config.SendInterval,
+		maxBufferSize: config.ChannelBufferSize,
 	}
 
 	switch config.Encoding {
@@ -185,7 +248,10 @@ func NewAsyncWorker(id int, config transport.Config, queue chan *carbon.Metric, 
 		w.compressor = workers.NoopCompressor
 	}
 
-	go w.Loop()
+	go w.TryConnect()
+	w.reconnectChan <- struct{}{}
+
+	l.Info("async worker started")
 
 	return w
 }

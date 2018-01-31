@@ -1,140 +1,82 @@
 package queue
 
 import (
+	"strconv"
+	"sync"
 	"testing"
 
+	"time"
+
 	"bytes"
-	"github.com/go-graphite/gorelka/carbon"
 )
 
-/*
-func payloadsEqual(first *carbon.Payload, second *carbon.Payload) bool {
-	if first.Metrics == nil {
-		if second.Metrics == nil {
-			return true
-		}
-		return false
-	}
-	if second.Metrics == nil || len(first.Metrics) != len(second.Metrics) {
-		return false
-	}
+const (
+	payloads    = 1000
+	queueFactor = 10000
+)
 
-	for i, m1 := range first.Metrics {
-		m2 := second.Metrics[i]
-		if m1.Metric != m2.Metric || len(m1.Points) != len(m2.Points) {
-			return false
-		}
-		for j, point1 := range m1.Points {
-			point2 := m2.Points[j]
-			if point1.Value != point2.Value || point1.Timestamp != point2.Timestamp {
-				return false
+func BenchmarkSingleDeliveryQueueByteEnqueueDequeueSingleThread(b *testing.B) {
+	payload := make([][]byte, 0, 1000)
+	for i := 0; i < payloads; i++ {
+		payload = append(payload, []byte("some.random.payload"+strconv.Itoa(i)))
+	}
+	q := NewSingleDeliveryQueueByte(payloads * queueFactor)
+	b.ResetTimer()
+	var err error
+	firstRun := true
+	for i := 0; i < b.N; i++ {
+		firstRun = true
+		for firstRun || err != nil {
+			firstRun = false
+			err = q.EnqueueMany(payload)
+			if err != nil {
+				_, _ = q.DequeueAll()
 			}
 		}
 	}
 
-	return true
 }
 
-func TestSingleDeliveryQueueCarbon(t *testing.T) {
-	q := NewSingleDeliveryQueue(100)
-
-	testPayload := &carbon.Payload{
-		Metrics: []*carbon.Metric{
-			{
-				Metric: "foo",
-				Points: []carbon.Point{
-					{
-						Value:     1.2,
-						Timestamp: 123.0,
-					},
-				},
-			},
-			{
-				Metric: "bar",
-				Points: []carbon.Point{
-					{
-						Value:     2.4,
-						Timestamp: 124.0,
-					},
-				},
-			},
-		}}
-
-	q.Enqueue(testPayload)
-	l := q.Len()
-	if l != 1 {
-		t.Errorf("Queue have wrong amount of data: %v, expected %v", l, 1)
+func BenchmarkSingleDeliveryQueueByteEnqueueDequeueMultiThread(b *testing.B) {
+	payload := make([][]byte, 0, payloads)
+	for i := 0; i < payloads; i++ {
+		payload = append(payload, []byte("some.random.payload"+strconv.Itoa(i)))
 	}
 
-	if !q.HaveData() {
-		t.Error("Queue doesn't have data, but should")
-	}
+	q := NewSingleDeliveryQueueByte(payloads * queueFactor)
 
-	p, ok := q.DequeueAll()
-	if !ok {
-		t.Error("Can't dequeue")
-	}
+	syncClose := make(chan struct{})
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-syncClose:
+				return
+			default:
+			}
+			_, _ = q.DequeueAll()
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
 
-	if !payloadsEqual(testPayload, p) {
-		t.Errorf("Malformed point. Got: %+v, expected %+v", p, testPayload)
-	}
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		var err error
+		firstRun := true
+		for pb.Next() {
+			firstRun = true
+			for firstRun || err != nil {
+				firstRun = false
+				err = q.EnqueueMany(payload)
+			}
+		}
+	})
+	close(syncClose)
 
-	p, ok = q.DequeueAll()
-	if ok {
-		t.Errorf("Dequeued point again: %+v", p)
-	}
-
-	if q.Len() != 0 {
-		t.Errorf("Wrong len: %v, exepcted %v", q.Len(), 0)
-	}
-
-	if q.HaveData() {
-		t.Error("Queue have data, but shouldn't")
-	}
-
-	checkPayload := &carbon.Payload{
-		Metrics: []*carbon.Metric{
-			{
-				Metric: "foo",
-				Points: []carbon.Point{
-					{
-						Value:     1.2,
-						Timestamp: 123.0,
-					},
-					{
-						Value:     1.2,
-						Timestamp: 123.0,
-					},
-				},
-			},
-			{
-				Metric: "bar",
-				Points: []carbon.Point{
-					{
-						Value:     2.4,
-						Timestamp: 124.0,
-					},
-					{
-						Value:     2.4,
-						Timestamp: 124.0,
-					},
-				},
-			},
-		}}
-
-	q.Enqueue(testPayload)
-	q.Enqueue(testPayload)
-
-	p, ok = q.DequeueAll()
-	if !ok {
-		t.Error("Can't dequeue")
-	}
-
-	if !payloadsEqual(checkPayload, p) {
-		t.Errorf("Malformed point. Got: %+v, expected %+v", p, checkPayload)
-	}
+	wg.Wait()
 }
-*/
 
 func TestSingleDeliveryQueueByte(t *testing.T) {
 	q := NewSingleDeliveryQueueByte(100)

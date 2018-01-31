@@ -9,6 +9,7 @@ import (
 )
 
 type Distribute interface {
+	IsAll() bool
 	MetricToShard(metric *carbon.Metric) int
 }
 
