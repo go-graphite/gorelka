@@ -194,6 +194,7 @@ func (w *syncWorker) Loop() {
 func NewSyncWorker(id int, config transport.Config, queue *queue.SingleDeliveryQueue, exitChan <-chan struct{}) *syncWorker {
 	l := zapwriter.Logger("worker").With(
 		zap.Int("id", id),
+		zap.String("senderGroupName", config.Name),
 		zap.String("server", config.Servers[id]),
 	)
 

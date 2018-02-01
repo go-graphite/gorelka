@@ -52,14 +52,13 @@ type Generator struct {
 func NewGenerator(t, dst, pattern string, config GeneratorConfig, exitChan <-chan struct{}, resChan chan<- GeneratorStats) (*Generator, error) {
 	logger := zapwriter.Logger("generator").With(zap.String("name", config.Name))
 	metricsPerConnection := int(math.Ceil(float64(config.MetricsPerInterval) / (float64(config.Connections))))
-	name := strings.Replace(pattern, "%n", config.Name, 0)
-	name = strings.Replace(name, "%r", config.Interval.String(), 0)
+	name := strings.Replace(pattern, "%n", config.Name, -1)
 	names := make([][][]byte, config.Connections)
 	for i := 0; i < config.Connections; i++ {
-		tmp := strings.Replace(name, "%c", strconv.Itoa(i-1), 0)
+		tmp := strings.Replace(name, "%c", strconv.Itoa(i-1), -1)
 		names[i] = make([][]byte, metricsPerConnection)
 		for m := 0; m < metricsPerConnection; m++ {
-			tmp2 := strings.Replace(tmp, "%i", strconv.Itoa(m-1), 0)
+			tmp2 := strings.Replace(tmp, "%i", strconv.Itoa(m-1), -1)
 			names[i][m] = []byte(tmp2)
 		}
 	}

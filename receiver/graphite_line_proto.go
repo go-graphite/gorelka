@@ -346,13 +346,13 @@ func (l *GraphiteLineReceiver) parseRelaxed(line []byte) (data *carbon.Metric, e
 		return nil, errors.WithMessage(errFmtParseError, "invalid timestamp")
 	}
 
-	metric, tags, err := l.parseTags(line[:s1])
+	tags, err := l.parseTags(line[:s1])
 	if err != nil {
 		return nil, err
 	}
 
 	p := &carbon.Metric{
-		Metric: metric,
+		Metric: hacks.UnsafeString(line[:s1]),
 		Tags:   tags,
 		Points: []carbon.Point{{
 			Value:     value,
@@ -387,13 +387,13 @@ func (l *GraphiteLineReceiver) Parse(line []byte) (*carbon.Metric, error) {
 		return nil, errors.WithMessage(errFmtParseError, "invalid timestamp")
 	}
 
-	metric, tags, err := l.parseTags(line[:s1])
+	tags, err := l.parseTags(line[:s1])
 	if err != nil {
 		return nil, err
 	}
 
 	p := &carbon.Metric{
-		Metric: metric,
+		Metric: hacks.UnsafeString(line[:s1]),
 		Tags:   tags,
 		Points: []carbon.Point{{
 			Value:     value,
@@ -404,24 +404,25 @@ func (l *GraphiteLineReceiver) Parse(line []byte) (*carbon.Metric, error) {
 	return p, nil
 }
 
-func (l *GraphiteLineReceiver) parseTags(metricTags []byte) (metric string, tags Tags, err error) {
-	metric = hacks.UnsafeString(metricTags)
-	tags = Tags{}
+func (l *GraphiteLineReceiver) parseTags(metricTags []byte) (Tags, error) {
+	tags := Tags{}
 	if bytes.Contains(metricTags, []byte(";")) {
 		for i, part := range bytes.Split(metricTags, []byte(";")) {
 			if i == 0 {
-				metric = string(part)
 				continue
 			}
 			pair := bytes.Split(part, []byte("="))
 			if len(pair) != 2 {
-				return metric, tags, errors.WithMessage(errFmtParseError, "")
+				return tags, errors.WithMessage(errFmtParseError, "")
 			}
 			tags[string(pair[0])] = string(pair[1])
 		}
+		l.Config.mergeDefaultTags(tags)
+	} else {
+		tags = l.Config.Tags
 	}
-	l.Config.mergeDefaultTags(tags)
-	return metric, tags, nil
+
+	return tags, nil
 }
 
 func (l *GraphiteLineReceiver) processGraphiteConnection(c net.Conn) {

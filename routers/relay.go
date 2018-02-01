@@ -6,11 +6,10 @@ import (
 
 	"github.com/lomik/zapwriter"
 	"go.uber.org/zap"
-	"golang.org/x/sync/syncmap"
 	"regexp"
 	"strconv"
 	"strings"
-
+	"sync"
 	"sync/atomic"
 )
 
@@ -46,8 +45,10 @@ type Config struct {
 // RelayRouter describes internal router state.
 type RelayRouter struct {
 	Config
-	matchCache syncmap.Map
-	reCache    syncmap.Map
+	matchCacheMutex sync.RWMutex
+	reCacheMutex    sync.RWMutex
+	matchCache      map[string]*ruleMatch
+	reCache         map[string]*regexp.Regexp
 
 	senders []transport.Sender
 
@@ -85,7 +86,9 @@ func NewRelayRouter(senders []transport.Sender, config Config) *RelayRouter {
 			senders:       []transport.Sender{transport.NewBlackholeSender()},
 			lastIfMatched: true,
 		},
-		logger: zapwriter.Logger("router"),
+		matchCache: make(map[string]*ruleMatch),
+		reCache:    make(map[string]*regexp.Regexp),
+		logger:     zapwriter.Logger("router"),
 	}
 }
 
@@ -161,20 +164,21 @@ func (r *RelayRouter) routeMetric(res map[string]*senderDetails, metric *carbon.
 		)
 		return
 	}
-	match := ruleMatch{
-		senders: []transport.Sender{},
-	}
 
 	// Try to do a cache lookup
 	// To speed up processing we will cache matches for each metric
 	// TODO: Optimize memory consumption here
-	m, fromCache := r.matchCache.Load(metric.Metric)
+	r.matchCacheMutex.RLock()
+	match, fromCache := r.matchCache[metric.Metric]
+	r.matchCacheMutex.RUnlock()
 	switch fromCache {
 	case true:
 		atomic.AddUint64(&r.Metrics.RulesCacheHit, 1)
-		match = m.(ruleMatch)
 	default:
 		atomic.AddUint64(&r.Metrics.RulesCacheMiss, 1)
+		match = &ruleMatch{
+			senders: []transport.Sender{},
+		}
 
 		for _, rule := range r.Rules {
 			r.logger.Debug("trying rule",
@@ -193,7 +197,9 @@ func (r *RelayRouter) routeMetric(res map[string]*senderDetails, metric *carbon.
 					continue
 				}
 			} else {
-				reRaw, ok := r.reCache.Load(rule.Regex)
+				r.reCacheMutex.RLock()
+				re, ok := r.reCache[rule.Regex]
+				r.reCacheMutex.RUnlock()
 				if !ok {
 					re, err = regexp.Compile(rule.Regex)
 					if err != nil {
@@ -203,9 +209,9 @@ func (r *RelayRouter) routeMetric(res map[string]*senderDetails, metric *carbon.
 						)
 						continue
 					}
-					r.reCache.Store(rule.Regex, re)
-				} else {
-					re = reRaw.(*regexp.Regexp)
+					r.reCacheMutex.Lock()
+					r.reCache[rule.Regex] = re
+					r.reCacheMutex.Unlock()
 				}
 
 				if !re.Match([]byte(metric.Metric)) {
@@ -285,11 +291,13 @@ func (r *RelayRouter) routeMetric(res map[string]*senderDetails, metric *carbon.
 
 	// To unify the process, replace empty match with Blackhole.
 	if len(match.senders) == 0 {
-		match = r.blackholeMatch
+		match = &r.blackholeMatch
 	}
 
 	if !fromCache {
-		r.matchCache.Store(metric.Metric, match)
+		r.matchCacheMutex.Lock()
+		r.matchCache[metric.Metric] = match
+		r.matchCacheMutex.Unlock()
 	}
 	atomic.AddUint64(&r.Metrics.MetricsRouted, 1)
 	if match.logOnReceive {
