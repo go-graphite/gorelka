@@ -17,6 +17,12 @@ General:
 - [ ] Internal stats
 - [ ] Extended stats
 
+Benchmark:
+- [X] Provide simple but configurable load generator
+- [X] Load generator should be fast (at least 10M lines/sec on a E5-2620 over loopback)
+- [ ] Delay measurements
+- [ ] Extrapolate speed based on when data arrives
+
 Config:
 - [ ] Override key for Transport distribution
 
@@ -33,12 +39,13 @@ Input:
 
 Input Encoders:
 - [X] Graphite Line Protocol
-- [ ] Graphite Line Protocol with tags
+- [X] Graphite Line Protocol with tags
 - [ ] Metrics 2.0
 - [ ] InfluxDB Line Protocol
 
 Output Encoders:
 - [X] Graphite Line Protocol
+- [X] Graphite Line Protocol with tags
 - [X] JSON
 - [X] Protobuf
 - [ ] [kafkamdm](https://github.com/raintank/schema)
@@ -69,14 +76,22 @@ Documentation:
 - [ ] Design documentation
 - [ ] Extended docs
 
+Performance
+-----------
+
+Internal benchmarks shows that current version of relay can do simple routing (StatsWith: "" + send to 4 destinations) of 2M lines/sec on 2xE5-2620v3, 128GB Ram. CPU Consumption is 6 (out of 24) cores on average (spikes up to 18 cores), memory consumption is far from optimal - 60GB of Ram (6x overhead). This performance levels can't be considered ok for sustained load.
+
 Known issues
 ------------
 
 - Some internal queues (if you can call it queues) have no limit so malformed or unthrottled input might lead to OOM issues
 - If backend go down, first point in queue will be lost
-- Performance is far from optimal.
 - Config format is far from perfect (readability, easy of modification, easy of generation)
 - Unstable config format
+- Delays are untested
+- Might contain memory leaks
+- Have no statistics
+- Have no documentation, except for comments in config file
 
 Acknowledgement
 ---------------
