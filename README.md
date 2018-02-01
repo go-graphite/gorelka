@@ -81,6 +81,10 @@ Performance
 
 Internal benchmarks shows that current version of relay can do simple routing (StatsWith: "" + send to 4 destinations) of 2M lines/sec on 2xE5-2620v3, 128GB Ram. CPU Consumption is 6 (out of 24) cores on average (spikes up to 18 cores), memory consumption is far from optimal - 60GB of Ram (6x overhead). This performance levels can't be considered ok for sustained load.
 
+With more complex rules, relay performance dramatically decreases (10-20x decrease and 10x more memory consumption). This is subject to investigate and fix.
+
+Performance with tags is mostly untested
+
 Known issues
 ------------
 
