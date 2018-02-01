@@ -251,8 +251,8 @@ func (l *GraphiteLineReceiver) Start() {
 
 func (l *GraphiteLineReceiver) validateAndParse(id int) {
 	processInterval := l.sendInterval / 2
-	if processInterval < 100*time.Millisecond {
-		processInterval = 100 * time.Millisecond
+	if processInterval < 1*time.Millisecond {
+		processInterval = 50 * time.Millisecond
 	}
 	var err error
 	var metric *carbon.Metric
@@ -265,14 +265,9 @@ func (l *GraphiteLineReceiver) validateAndParse(id int) {
 		parse = l.parseRelaxed
 	}
 	for {
-		shutdown := atomic.LoadInt64(&l.shutdownInProgress)
-		if shutdown == 1 {
+		d := l.processQueue[id].DequeueAll()
+		if d == nil {
 			return
-		}
-
-		d, ok := l.processQueue[id].DequeueAll()
-		if !ok {
-			continue
 		}
 		payload := carbon.Payload{}
 		for _, line := range d {
@@ -290,7 +285,6 @@ func (l *GraphiteLineReceiver) validateAndParse(id int) {
 		if len(payload.Metrics) > 0 {
 			go l.router.Route(payload)
 		}
-		time.Sleep(processInterval)
 	}
 }
 

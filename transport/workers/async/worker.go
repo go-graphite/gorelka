@@ -170,8 +170,8 @@ func (w *asyncWorker) Loop() {
 			return
 		default:
 		}
-		payloads, done := w.queue.DequeueAll()
-		if !done {
+		payloads, ok := w.queue.DequeueAllNB()
+		if !ok {
 			time.Sleep(w.sendInterval / 10)
 			continue
 		}

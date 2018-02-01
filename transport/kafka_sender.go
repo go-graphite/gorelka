@@ -173,7 +173,7 @@ func (k *KafkaSender) worker(queue *queue.SingleDeliveryQueue) {
 		default:
 		}
 
-		payload, ok := queue.DequeueAll()
+		payload, ok := queue.DequeueAllNB()
 		if !ok {
 			time.Sleep(k.sendInterval / 10)
 			continue

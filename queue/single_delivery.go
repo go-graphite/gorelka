@@ -27,8 +27,7 @@ func NewSingleDeliveryQueue(size int64) *SingleDeliveryQueue {
 }
 
 func (q *SingleDeliveryQueue) Len() int64 {
-	s := atomic.LoadInt64(&q.size)
-	return s
+	return atomic.LoadInt64(&q.size)
 }
 
 func (q *SingleDeliveryQueue) HaveData() bool {
@@ -45,16 +44,17 @@ func (q *SingleDeliveryQueue) Enqueue(data *carbon.Payload) {
 			q.nameToMetric[data.Metrics[i].Metric] = metric
 		}
 	}
+
 	q.size++
 	q.Unlock()
 }
 
-func (q *SingleDeliveryQueue) DequeueAll() (*carbon.Payload, bool) {
-	q.Lock()
-	if q.size == 0 {
-		q.Unlock()
+func (q *SingleDeliveryQueue) DequeueAllNB() (*carbon.Payload, bool) {
+	size := q.Len()
+	if size == 0 {
 		return nil, false
 	}
+	q.Lock()
 	e := q.data
 	q.data = &carbon.Payload{Metrics: make([]*carbon.Metric, 0, len(q.data.Metrics))}
 	q.nameToMetric = make(map[string]*carbon.Metric, len(q.nameToMetric))
@@ -72,12 +72,18 @@ type SingleDeliveryQueueByte struct {
 	currentElement int64
 	maxSize        int64
 	size           int64
+
+	notifierChan chan struct{}
+	notified     bool
 }
 
 func NewSingleDeliveryQueueByte(size int64) *SingleDeliveryQueueByte {
 	return &SingleDeliveryQueueByte{
 		data:    make([][]byte, 0, size),
 		maxSize: size,
+
+		notifierChan: make(chan struct{}),
+		notified:     false,
 	}
 }
 
@@ -90,18 +96,6 @@ func (q *SingleDeliveryQueueByte) Len() int64 {
 	return s
 }
 
-func (q *SingleDeliveryQueueByte) Enqueue(data []byte) error {
-	size := q.Len()
-	if size >= q.maxSize {
-		return errBufferOverflow
-	}
-	q.Lock()
-	q.data = append(q.data, data)
-	atomic.AddInt64(&q.size, 1)
-	q.Unlock()
-	return nil
-}
-
 func (q *SingleDeliveryQueueByte) EnqueueMany(data [][]byte) error {
 	size := q.Len()
 	if size >= q.maxSize {
@@ -110,25 +104,29 @@ func (q *SingleDeliveryQueueByte) EnqueueMany(data [][]byte) error {
 	q.Lock()
 	q.data = append(q.data, data...)
 	atomic.AddInt64(&q.size, int64(len(data)))
-	q.Unlock()
 
+	if !q.notified {
+		q.notifierChan <- struct{}{}
+		q.notified = true
+	}
+	q.Unlock()
 	return nil
 }
 
-func (q *SingleDeliveryQueueByte) Dequeue() ([]byte, bool) {
-	size := q.Len()
-	if size == 0 {
-		return nil, false
+func (q *SingleDeliveryQueueByte) DequeueAll() [][]byte {
+	select {
+	case <-q.notifierChan:
+		q.Lock()
+		q.notified = false
+		e := q.data
+		q.data = make([][]byte, 0, len(q.data))
+		atomic.StoreInt64(&q.size, 0)
+		q.Unlock()
+		return e
 	}
-	q.Lock()
-	e := q.data[0]
-	q.data = q.data[1:]
-	atomic.AddInt64(&q.size, -1)
-	q.Unlock()
-	return e, true
 }
 
-func (q *SingleDeliveryQueueByte) DequeueAll() ([][]byte, bool) {
+func (q *SingleDeliveryQueueByte) DequeueAllNB() ([][]byte, bool) {
 	size := q.Len()
 	if size == 0 {
 		return nil, false
@@ -137,6 +135,8 @@ func (q *SingleDeliveryQueueByte) DequeueAll() ([][]byte, bool) {
 	e := q.data
 	q.data = make([][]byte, 0, len(q.data))
 	atomic.StoreInt64(&q.size, 0)
+	_ = <-q.notifierChan
+	q.notified = false
 	q.Unlock()
 	return e, true
 }

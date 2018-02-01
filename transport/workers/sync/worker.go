@@ -158,8 +158,8 @@ func (w *syncWorker) Loop() {
 			w.writer.Write(data)
 		default:
 		}
-		payloads, done := w.queue.DequeueAll()
-		if !done {
+		payloads, ok := w.queue.DequeueAllNB()
+		if !ok {
 			time.Sleep(10 * time.Millisecond)
 			continue
 		}
