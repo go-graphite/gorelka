@@ -260,11 +260,6 @@ func (r *RelayRouter) routeMetric(res map[string]*senderDetails, metric *carbon.
 				}
 			}
 
-			r.logger.Debug("routing metric",
-				zap.String("metric_name", metric.Metric),
-				zap.Any("senders", rule.senders),
-			)
-
 			match.senders = append(match.senders, rule.senders...)
 
 			// Stop applying rules if the rule is marked as "last"
@@ -308,10 +303,6 @@ func (r *RelayRouter) routeMetric(res map[string]*senderDetails, metric *carbon.
 
 	// Actually send the metrics
 	for _, sender := range match.senders {
-		r.logger.Debug("sending metric",
-			zap.String("metric", metric.Metric),
-			zap.Any("sender", sender),
-		)
 		name := sender.GetName()
 		if s, ok := res[name]; ok {
 			if m, ok := s.metricsMap[metric.Metric]; ok {
