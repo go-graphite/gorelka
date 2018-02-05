@@ -3,6 +3,7 @@ package receiver
 import (
 	"bufio"
 	"bytes"
+	"expvar"
 	"fmt"
 	"io"
 	"math"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/go-graphite/gorelka/carbon"
 	"github.com/go-graphite/gorelka/hacks"
+	"github.com/go-graphite/gorelka/metrics"
 	"github.com/go-graphite/gorelka/queue"
 	"github.com/go-graphite/gorelka/routers"
 	"github.com/go-graphite/gorelka/transport/workers"
@@ -24,8 +26,22 @@ import (
 )
 
 type Metrics struct {
-	ProcessedMetrics uint64
-	ProcessingTimeNS uint64
+	ReceivedPoints *expvar.Int
+	ParseErrors    *expvar.Int
+}
+
+func NewMetrics(name string) *Metrics {
+	prefix := "receiver.graphite." + name
+	m := &Metrics{
+		ReceivedPoints: expvar.NewInt(prefix + ".ReceivedPoints"),
+		ParseErrors:    expvar.NewInt(prefix + ".ParseErrors"),
+	}
+
+	collector := metrics.GetCollectorPrefixed(prefix)
+	collector.RegisterWithAggregation("ReceivedPoints", m.ReceivedPoints, metrics.Last)
+	collector.RegisterWithAggregation("ParseErrors", m.ParseErrors, metrics.Last)
+
+	return m
 }
 
 type Config struct {
@@ -64,7 +80,7 @@ type GraphiteLineReceiver struct {
 	router   routers.Router
 	isDebug  bool
 
-	Metrics Metrics
+	metrics *Metrics
 
 	decompressor workers.Decompressor
 
@@ -145,6 +161,7 @@ func graphiteLineReceiverInit(listener interface{}, lType listenerType, config C
 		acceptTimeout:      acceptTimeout,
 		shutdownInProgress: 0,
 		isDebug:            false,
+		metrics:            NewMetrics(config.Listen),
 
 		logger: zapwriter.Logger("graphite"),
 	}
@@ -159,6 +176,22 @@ func graphiteLineReceiverInit(listener interface{}, lType listenerType, config C
 
 	r.decompressor = workers.NewDecompressor(config.Decompression)
 	return r
+}
+
+func mergePayloads(dst, src *carbon.Payload) {
+	metrics := make(map[string]*carbon.Metric)
+	for _, v := range dst.Metrics {
+		metrics[v.Metric] = v
+	}
+
+	for _, v := range src.Metrics {
+		m, ok := metrics[v.Metric]
+		if ok {
+			m.Points = append(m.Points, v.Points...)
+		} else {
+			dst.Metrics = append(dst.Metrics, v)
+		}
+	}
 }
 
 func (l *GraphiteLineReceiver) Start() {
@@ -257,6 +290,7 @@ func (l *GraphiteLineReceiver) validateAndParse(id int) {
 	var err error
 	var metric *carbon.Metric
 	var parse func(line []byte) (*carbon.Metric, error)
+	metrics := make(map[string]*carbon.Metric)
 	if l.Strict {
 		l.logger.Debug("will use strict parser")
 		parse = l.Parse
@@ -264,6 +298,7 @@ func (l *GraphiteLineReceiver) validateAndParse(id int) {
 		l.logger.Debug("will use relaxed parser")
 		parse = l.parseRelaxed
 	}
+	pointsReceived := int64(0)
 	for {
 		d := l.processQueue[id].DequeueAll()
 		if d == nil {
@@ -273,16 +308,25 @@ func (l *GraphiteLineReceiver) validateAndParse(id int) {
 		for _, line := range d {
 			metric, err = parse(line)
 			if err != nil {
+				l.metrics.ParseErrors.Add(1)
 				l.logger.Error("error parsing line protocol, skipping line",
 					zap.String("line", hacks.UnsafeString(line)),
 					zap.Error(err),
 				)
 				continue
 			}
-			payload.Metrics = append(payload.Metrics, metric)
+			pointsReceived++
+			m, ok := metrics[metric.Metric]
+			if ok {
+				m.Points = append(m.Points, metric.Points...)
+			} else {
+				payload.Metrics = append(payload.Metrics, metric)
+			}
 		}
 
 		if len(payload.Metrics) > 0 {
+			l.metrics.ReceivedPoints.Add(pointsReceived)
+			pointsReceived = 0
 			go l.router.Route(payload)
 		}
 	}

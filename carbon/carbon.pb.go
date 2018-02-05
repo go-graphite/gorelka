@@ -274,7 +274,7 @@ func (this *Payload) GoString() string {
 	s := make([]string, 0, 5)
 	s = append(s, "&carbon.Payload{")
 	if this.Metrics != nil {
-		s = append(s, "Metrics: "+fmt.Sprintf("%#v", this.Metrics)+",\n")
+		s = append(s, "metrics: "+fmt.Sprintf("%#v", this.Metrics)+",\n")
 	}
 	s = append(s, "}")
 	return strings.Join(s, "")
@@ -628,7 +628,7 @@ func (this *Payload) String() string {
 		return "nil"
 	}
 	s := strings.Join([]string{`&Payload{`,
-		`Metrics:` + strings.Replace(fmt.Sprintf("%v", this.Metrics), "Metric", "Metric", 1) + `,`,
+		`metrics:` + strings.Replace(fmt.Sprintf("%v", this.Metrics), "Metric", "Metric", 1) + `,`,
 		`}`,
 	}, "")
 	return s
@@ -980,7 +980,7 @@ func (m *Payload) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Metrics", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field metrics", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {

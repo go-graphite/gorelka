@@ -10,6 +10,7 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 
+	"github.com/go-graphite/gorelka/metrics"
 	"github.com/go-graphite/gorelka/receiver"
 	"github.com/go-graphite/gorelka/transport"
 	"github.com/go-graphite/gorelka/transport/common"
@@ -64,9 +65,10 @@ type relayConf struct {
 }
 
 var config = struct {
-	Relay  relayConf
-	Logger []zapwriter.Config `json:"Logger"`
-	Debug  debugConfig
+	Relay   relayConf
+	Logger  []zapwriter.Config `json:"Logger"`
+	Debug   debugConfig
+	Metrics metrics.Config `json:"metrics"`
 
 	// Additional tags to be attached graphite metrics
 	Tags map[string]string
@@ -159,7 +161,7 @@ var config = struct {
 }
 
 // BuildVersion contains version and/or commit of current build. Defaults to "Development"
-var BuildVersion = "development"
+var BuildVersion = "(development)"
 
 var errNoListenersFmt = "no %v specified"
 var errNoTimoutSetFmt = "no timeout set for %v"
@@ -235,8 +237,6 @@ func main() {
 	configFile := flag.String("config", "", "config file (yaml)")
 
 	flag.Parse()
-	expvar.NewString("GoVersion").Set(runtime.Version())
-	expvar.NewString("BuildVersion").Set(BuildVersion)
 
 	viper.SetConfigName("g2mt")
 	if *configFile != "" {
@@ -282,12 +282,14 @@ func main() {
 
 	exitChan := make(chan struct{})
 
+	metrics.NewCollector(&config.Metrics)
+
+	expvar.NewString("GoVersion").Set(runtime.Version())
+	expvar.NewString("BuildVersion").Set(BuildVersion)
+	expvar.Publish("config", expvar.Func(func() interface{} { return config }))
+
 	transports := make([]transport.Sender, 0)
 	for k, t := range config.Relay.Destinations {
-		logger.Debug("DEBUG:",
-			zap.Any("t", t),
-		)
-
 		c := common.Config{}
 		err = c.FromParsed(t.Config)
 		c.Name = k

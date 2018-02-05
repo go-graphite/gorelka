@@ -2,15 +2,16 @@ package routers
 
 import (
 	"github.com/go-graphite/gorelka/carbon"
+	"github.com/go-graphite/gorelka/metrics"
 	"github.com/go-graphite/gorelka/transport"
 
+	"expvar"
 	"github.com/lomik/zapwriter"
 	"go.uber.org/zap"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 )
 
 // Rule is a generic struct that will describe all possible rules
@@ -27,13 +28,32 @@ type Rule struct {
 	senders []transport.Sender
 }
 
-// Metrics contains all internal metrics
+// metrics contains all internal metrics
 type Metrics struct {
-	InfiniteRecursions uint64
-	MetricsRouted      uint64
-	MetricsRewritten   uint64
-	RulesCacheMiss     uint64
-	RulesCacheHit      uint64
+	InfiniteRecursions *expvar.Int
+	PointsBlackholed   *expvar.Int
+	MetricsRewritten   *expvar.Int
+	RulesCacheMiss     *expvar.Int
+	RulesCacheHit      *expvar.Int
+}
+
+func NewMetrics() *Metrics {
+	m := &Metrics{
+		InfiniteRecursions: expvar.NewInt("router.InfiniteRecursions"),
+		PointsBlackholed:   expvar.NewInt("router.PointsBlackholed"),
+		MetricsRewritten:   expvar.NewInt("router.MetricsRewritten"),
+		RulesCacheHit:      expvar.NewInt("router.RulesCacheHit"),
+		RulesCacheMiss:     expvar.NewInt("router.RulesCacheMiss"),
+	}
+
+	collector := metrics.GetCollectorPrefixed("router")
+	collector.RegisterWithAggregation("InifiniteRecursion", m.InfiniteRecursions, metrics.Last)
+	collector.RegisterWithAggregation("PointsBlackholed", m.PointsBlackholed, metrics.Last)
+	collector.RegisterWithAggregation("MetricsRewritten", m.MetricsRewritten, metrics.Last)
+	collector.RegisterWithAggregation("RulesCacheHit", m.MetricsRewritten, metrics.Last)
+	collector.RegisterWithAggregation("RulesCacheMiss", m.MetricsRewritten, metrics.Last)
+
+	return m
 }
 
 // Config is a structure that contains router-specific config options
@@ -56,7 +76,9 @@ type RelayRouter struct {
 
 	logger *zap.Logger
 
-	Metrics Metrics
+	metrics *Metrics
+
+	collector metrics.Collector
 }
 
 // NewRelayRouter will create a new router
@@ -89,6 +111,8 @@ func NewRelayRouter(senders []transport.Sender, config Config) *RelayRouter {
 		matchCache: make(map[string]*ruleMatch),
 		reCache:    make(map[string]*regexp.Regexp),
 		logger:     zapwriter.Logger("router"),
+
+		metrics: NewMetrics(),
 	}
 }
 
@@ -155,7 +179,7 @@ func (r *RelayRouter) routeMetric(res map[string]*senderDetails, metric *carbon.
 	// We want to break that cycle at some point.
 	// Please note that "save original" will still produce some extra metrics
 	if iteration > r.MaxRuleRecursion {
-		atomic.AddUint64(&r.Metrics.InfiniteRecursions, 1)
+		r.metrics.InfiniteRecursions.Add(1)
 		r.logger.Warn("suspected loop",
 			zap.String("reason", "max_allowed_recursion_depth exceeded"),
 			zap.Int("iteration", iteration),
@@ -173,9 +197,9 @@ func (r *RelayRouter) routeMetric(res map[string]*senderDetails, metric *carbon.
 	r.matchCacheMutex.RUnlock()
 	switch fromCache {
 	case true:
-		atomic.AddUint64(&r.Metrics.RulesCacheHit, 1)
+		r.metrics.RulesCacheHit.Add(1)
 	default:
-		atomic.AddUint64(&r.Metrics.RulesCacheMiss, 1)
+		r.metrics.RulesCacheMiss.Add(1)
 		match = &ruleMatch{
 			senders: []transport.Sender{},
 		}
@@ -226,6 +250,7 @@ func (r *RelayRouter) routeMetric(res map[string]*senderDetails, metric *carbon.
 
 			// Special case for blackhole
 			if rule.Blackhole {
+
 				continue
 			}
 
@@ -233,7 +258,7 @@ func (r *RelayRouter) routeMetric(res map[string]*senderDetails, metric *carbon.
 			if rule.Regex != "" && rule.RewriteTo != "" {
 				name := rewrite(re, metric.Metric, rule.RewriteTo)
 				if name == metric.Metric {
-					atomic.AddUint64(&r.Metrics.InfiniteRecursions, 1)
+					r.metrics.InfiniteRecursions.Add(1)
 					r.logger.Warn("suspected loop",
 						zap.String("reason", "Metric name haven't changed after Rewrite"),
 						zap.Int("iteration", iteration),
@@ -272,7 +297,7 @@ func (r *RelayRouter) routeMetric(res map[string]*senderDetails, metric *carbon.
 
 	if len(match.rewriteTo) != 0 {
 		for _, name := range match.rewriteTo {
-			atomic.AddUint64(&r.Metrics.MetricsRewritten, 1)
+			r.metrics.MetricsRewritten.Add(1)
 			newMetric := &carbon.Metric{
 				Metric: name,
 				Points: metric.Points,
@@ -294,7 +319,6 @@ func (r *RelayRouter) routeMetric(res map[string]*senderDetails, metric *carbon.
 		r.matchCache[metric.Metric] = match
 		r.matchCacheMutex.Unlock()
 	}
-	atomic.AddUint64(&r.Metrics.MetricsRouted, 1)
 	if match.logOnReceive {
 		r.logger.Info("logging metric",
 			zap.Any("metric", metric),

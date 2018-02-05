@@ -76,8 +76,8 @@ func TestRecursionDetection(t *testing.T) {
 		t.Fatalf("Got >0 metrics: %v", len(metrics))
 	}
 
-	if router.Metrics.InfiniteRecursions != uint64(len(payload.Metrics)) {
-		t.Fatalf("Infinite Recursion detector bug, got %v recursions, expected %v", router.Metrics.InfiniteRecursions, len(payload.Metrics))
+	if router.metrics.InfiniteRecursions != uint64(len(payload.Metrics)) {
+		t.Fatalf("Infinite Recursion detector bug, got %v recursions, expected %v", router.metrics.InfiniteRecursions, len(payload.Metrics))
 	}
 }
 
@@ -372,11 +372,11 @@ func TestRulesCache(t *testing.T) {
 		t.Errorf("Sender: Got = %v (expected %v), metrics: %v", len(metrics), 2, metrics)
 	}
 
-	if router.Metrics.RulesCacheHit != 1 {
-		t.Errorf("Rules cache doesn't work, hits: %v, misses: %v, expected_hits: %v", router.Metrics.RulesCacheHit, router.Metrics.RulesCacheMiss, 1)
+	if router.metrics.RulesCacheHit != 1 {
+		t.Errorf("Rules cache doesn't work, hits: %v, misses: %v, expected_hits: %v", router.metrics.RulesCacheHit, router.metrics.RulesCacheMiss, 1)
 	}
 
-	if router.Metrics.RulesCacheMiss != 1 {
-		t.Fatalf("Rules cache doesn't work, hits: %v, misses: %v, expected_misses: %v", router.Metrics.RulesCacheHit, router.Metrics.RulesCacheMiss, 1)
+	if router.metrics.RulesCacheMiss != 1 {
+		t.Fatalf("Rules cache doesn't work, hits: %v, misses: %v, expected_misses: %v", router.metrics.RulesCacheHit, router.metrics.RulesCacheMiss, 1)
 	}
 }

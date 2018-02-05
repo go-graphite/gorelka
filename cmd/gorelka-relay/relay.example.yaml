@@ -1,4 +1,11 @@
 ---
+Metrics:
+    Type: "graphite"
+    GraphiteHost: "localhost:2005"
+    MetricPrefixPattern: "{prefix}.{fqdn}.relay"
+    Prefix: "carbon"
+    Interval: "10s"
+    LogMetrics: true
 Relay:
     Destinations:
        local1:
