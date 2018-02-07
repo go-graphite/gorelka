@@ -44,6 +44,12 @@
   version = "v1.4.2"
 
 [[projects]]
+  name = "github.com/go-graphite/carbonzipper"
+  packages = ["mstats"]
+  revision = "b7a336de4671b6474a5eadb306ab709b5a840c2f"
+  version = "0.73.2"
+
+[[projects]]
   name = "github.com/gogo/protobuf"
   packages = ["gogoproto","jsonpb","proto","protoc-gen-gogo/descriptor","sortkeys","types"]
   revision = "342cbe0a04158f6dcb03ca0079991a51a4248c02"
@@ -102,6 +108,12 @@
   packages = ["."]
   revision = "16398bac157da96aa88f98a2df640c7f32af1da2"
   version = "v1.0.1"
+
+[[projects]]
+  branch = "master"
+  name = "github.com/peterbourgon/g2g"
+  packages = ["."]
+  revision = "0c2bab2b173d2cd9385ea6da5cec7b14b5019f11"
 
 [[projects]]
   name = "github.com/pierrec/lz4"
@@ -177,12 +189,6 @@
 
 [[projects]]
   branch = "master"
-  name = "golang.org/x/sync"
-  packages = ["syncmap"]
-  revision = "fd80eb99c8f653c847d294a001bdf2a3a6f768f5"
-
-[[projects]]
-  branch = "master"
   name = "golang.org/x/sys"
   packages = ["unix"]
   revision = "83801418e1b59fb1880e363299581ee543af32ca"
@@ -202,6 +208,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "1b0d753cb4c5dbdba7eee94136b6087fa9c5ba6b306e931da5b7bb9ac8899398"
+  inputs-digest = "b274215aec6bfc2a5b80b23eb0f7f073e39ec507c9b325cb3066fa4d6f089d6a"
   solver-name = "gps-cdcl"
   solver-version = 1
