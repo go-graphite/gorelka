@@ -53,6 +53,7 @@ func NewGenerator(t, dst, pattern string, config GeneratorConfig, exitChan <-cha
 	logger := zapwriter.Logger("generator").With(zap.String("name", config.Name))
 	metricsPerConnection := int(math.Ceil(float64(config.MetricsPerInterval) / (float64(config.Connections))))
 	name := strings.Replace(pattern, "%n", config.Name, -1)
+	name = strings.Replace(name, "%r", config.Interval.String(), -1)
 	names := make([][][]byte, config.Connections)
 	for i := 0; i < config.Connections; i++ {
 		tmp := strings.Replace(name, "%c", strconv.Itoa(i-1), -1)
